@@ -24,6 +24,7 @@ Usage:
 
 Requirements:
   pip install pyserial numpy pyqtgraph pyqt5
+  pip install PyOpenGL          # only needed for --plot3d
 """
 
 import argparse
@@ -37,6 +38,19 @@ import threading
 
 import numpy as np
 import serial
+
+# ── Optional ML components ───────────────────────────────────────────────────
+try:
+    from ml_logger import MlCsvLogger, compute_pc_stats
+    _ML_LOGGER_AVAILABLE = True
+except ImportError:
+    _ML_LOGGER_AVAILABLE = False
+
+try:
+    from ml_inference import MlFallDetector
+    _ML_INFERENCE_AVAILABLE = True
+except ImportError:
+    _ML_INFERENCE_AVAILABLE = False
 
 # ── TLV type constants ──────────────────────────────────────────────────────
 TLV_COMPRESSED_POINT_CLOUD = 1020
@@ -351,9 +365,10 @@ class FallDetector:
     MIN_FRAMES         = 20     # warm-up for Tier 2/3
 
     # Tier 1 — fast fall (NO reference, NO maxZ ceiling, short warmup)
-    # Calibration: sitting -0.55 m/s, real fall -0.94 to -1.58 m/s → threshold -0.80
-    FAST_VZ_THRESHOLD  = -0.80  # m/s
-    FAST_PERSIST       = 5      # frames (~0.25 s at 20fps)
+    # Calibration 2026-04-10: sitting reaches -0.83 m/s sustained → raised threshold
+    # Gap: sitting max -0.83, walking max -0.90 → threshold -1.00 (confirmed after Group B)
+    FAST_VZ_THRESHOLD  = -1.10  # m/s — above crouching max (-1.05), sitting (-0.83), walking (-0.90)
+    FAST_PERSIST       = 2      # frames — Kalman smoother limits sustained spikes; 2 balances sensitivity
     MIN_FRAMES_FAST    = 5      # warmup for Tier 1 only (track may spawn mid-fall)
 
     # Tier 2 — slow / gradual fall (reference required, no vz constraint)
@@ -524,6 +539,31 @@ class FallDetector:
 # Config sender
 # ─────────────────────────────────────────────────────────────────────────────
 
+def parse_boundary_box(cfg_path: str):
+    """Return (xmin,xmax, ymin,ymax, zmin,zmax) from the first boundaryBox line in cfg.
+    Returns None if cfg_path is None or the line is not found."""
+    if cfg_path is None:
+        return None
+    try:
+        with open(cfg_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('boundaryBox'):
+                    parts = line.split()
+                    # boundaryBox <subframe> xmin xmax ymin ymax zmin zmax
+                    # or without subframe: boundaryBox xmin xmax ymin ymax zmin zmax
+                    nums = [float(p) for p in parts[1:] if p.lstrip('-').replace('.','').isdigit() or
+                            (p.startswith('-') and p[1:].replace('.','').isdigit())]
+                    # Skip subframe index (-1 or 0) if present
+                    if len(nums) == 7:
+                        nums = nums[1:]   # drop subframe
+                    if len(nums) == 6:
+                        return tuple(nums)  # xmin,xmax,ymin,ymax,zmin,zmax
+    except (FileNotFoundError, ValueError):
+        pass
+    return None
+
+
 def send_config(cli_port: str, cfg_path: str) -> bool:
     """Send a .cfg file to the sensor CLI port."""
     try:
@@ -617,6 +657,29 @@ class CsvLogger:
 # PyQtGraph visualizer
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _person_box_edges(cx: float, cy: float, minZ: float, maxZ: float,
+                      hw: float = 0.2) -> np.ndarray:
+    """
+    Return (24, 3) array of line-segment endpoints forming a wireframe box
+    around a person centred at (cx, cy) with half-width hw, from minZ to maxZ.
+    Used for GLLinePlotItem with mode='lines' (each pair = one segment).
+    """
+    x0, x1 = cx - hw, cx + hw
+    y0, y1 = cy - hw, cy + hw
+    z0, z1 = minZ, maxZ
+    return np.array([
+        # bottom rectangle
+        [x0, y0, z0], [x1, y0, z0],  [x1, y0, z0], [x1, y1, z0],
+        [x1, y1, z0], [x0, y1, z0],  [x0, y1, z0], [x0, y0, z0],
+        # top rectangle
+        [x0, y0, z1], [x1, y0, z1],  [x1, y0, z1], [x1, y1, z1],
+        [x1, y1, z1], [x0, y1, z1],  [x0, y1, z1], [x0, y0, z1],
+        # vertical edges
+        [x0, y0, z0], [x0, y0, z1],  [x1, y0, z0], [x1, y0, z1],
+        [x1, y1, z0], [x1, y1, z1],  [x0, y1, z0], [x0, y1, z1],
+    ], dtype=np.float32)
+
+
 def _snr_to_rgba(snr_array: np.ndarray) -> np.ndarray:
     """Map SNR values (0–20) to RGBA: red=low, yellow=mid, green=high."""
     t = np.clip(snr_array / 20.0, 0.0, 1.0)
@@ -639,7 +702,9 @@ class RadarWindow:
     The actual frame rate is limited by the radar (100 ms / 10 fps).
     """
 
-    def __init__(self, frame_queue, stop_event):
+    TRAIL_LEN = 50   # positions to keep per track
+
+    def __init__(self, frame_queue, stop_event, boundary_box=None, plot3d=False):
         import pyqtgraph as pg
         from pyqtgraph.Qt import QtCore, QtWidgets
 
@@ -647,8 +712,18 @@ class RadarWindow:
         self._stop  = stop_event
         self._total_falls  = 0
         self._total_faints = 0
-        self._track_items_xy: list = []
-        self._track_items_xz: list = []
+        # M1 — track trails and persistent scene items (reused each frame)
+        self._trails: dict = {}        # tid -> deque of (x, y, z)
+        self._trail_curves: dict = {}  # tid -> (PlotCurveItem_xy, PlotCurveItem_xz)
+        self._track_labels: dict = {}  # tid -> (TextItem_xy, TextItem_xz)
+        # 3D GL items (None if --plot3d not set)
+        self._gl_view  = None
+        self._gl_scat  = None
+        self._gl_trails: dict = {}     # tid -> GLLinePlotItem (trail)
+        self._gl_boxes:  dict = {}     # tid -> GLLinePlotItem (person wireframe)
+        # M3 — flash alert
+        self._flash_until = 0.0      # epoch time when flash expires
+        self._flash_color = ''
 
         pg.setConfigOptions(antialias=True, background='w', foreground='k')
 
@@ -657,7 +732,7 @@ class RadarWindow:
         # ── Main window ──────────────────────────────────────────────────────
         self._win = QtWidgets.QWidget()
         self._win.setWindowTitle('SafeRoom Radar — IWR6843 3D People Tracking')
-        self._win.resize(1200, 520)
+        self._win.resize(1600 if plot3d else 1200, 560)
 
         main_layout = QtWidgets.QHBoxLayout(self._win)
         main_layout.setContentsMargins(4, 4, 4, 4)
@@ -665,7 +740,7 @@ class RadarWindow:
 
         # ── Plots (left side) ─────────────────────────────────────────────
         self._glw = pg.GraphicsLayoutWidget()
-        main_layout.addWidget(self._glw, stretch=10)
+        main_layout.addWidget(self._glw, stretch=7 if plot3d else 10)
 
         # Top view X-Y
         self._plot_xy = self._glw.addPlot(row=0, col=0, title='Top view (X-Y)')
@@ -689,6 +764,24 @@ class RadarWindow:
         self._scat_xz = pg.ScatterPlotItem(size=7, pen=None)
         self._plot_xz.addItem(self._scat_xz)
 
+        # M2 — Boundary box (static, drawn once)
+        if boundary_box is not None:
+            xmin, xmax, ymin, ymax, zmin, zmax = boundary_box
+            box_pen = pg.mkPen(color=(80, 80, 200), width=1.5,
+                               style=QtCore.Qt.DashLine)
+            # Top view: X-Y rectangle
+            bx_xy = np.array([xmin, xmax, xmax, xmin, xmin])
+            by_xy = np.array([ymin, ymin, ymax, ymax, ymin])
+            self._plot_xy.plot(bx_xy, by_xy, pen=box_pen)
+            # Side view: X-Z rectangle
+            bx_xz = np.array([xmin, xmax, xmax, xmin, xmin])
+            bz_xz = np.array([zmin, zmin, zmax, zmax, zmin])
+            self._plot_xz.plot(bx_xz, bz_xz, pen=box_pen)
+            # Sensor marker (triangle ▲) in top view at origin
+            self._plot_xy.plot([0], [0], pen=None,
+                               symbol='t', symbolSize=12,
+                               symbolBrush=(255, 100, 0), symbolPen=None)
+
         # Status bar below both plots
         self._status = self._glw.addLabel(
             '', row=1, col=0, colspan=2,
@@ -702,7 +795,7 @@ class RadarWindow:
         cnt_layout = QtWidgets.QVBoxLayout(cnt_widget)
         cnt_layout.setAlignment(QtCore.Qt.AlignCenter)
 
-        lbl_title = QtWidgets.QLabel('CAÍDAS\ndetectadas')
+        lbl_title = QtWidgets.QLabel('FALLS\ndetected')
         lbl_title.setAlignment(QtCore.Qt.AlignCenter)
         lbl_title.setStyleSheet('color: darkred; font-weight: bold; font-size: 11px;')
 
@@ -715,7 +808,7 @@ class RadarWindow:
         self._lbl_last.setAlignment(QtCore.Qt.AlignCenter)
         self._lbl_last.setStyleSheet('color: gray; font-size: 9px;')
 
-        lbl_faint_title = QtWidgets.QLabel('DESMAYOS\ndetectados')
+        lbl_faint_title = QtWidgets.QLabel('FAINTS\ndetected')
         lbl_faint_title.setAlignment(QtCore.Qt.AlignCenter)
         lbl_faint_title.setStyleSheet(
             'color: darkorange; font-weight: bold; font-size: 11px; margin-top: 8px;')
@@ -734,6 +827,53 @@ class RadarWindow:
         cnt_layout.addStretch()
 
         main_layout.addWidget(cnt_widget, stretch=1)
+
+        # ── Optional 3D GL view ──────────────────────────────────────────
+        if plot3d:
+            try:
+                import pyqtgraph.opengl as gl
+
+                gl_widget = gl.GLViewWidget()
+                gl_widget.setMinimumWidth(380)
+                gl_widget.setCameraPosition(distance=6.0, elevation=25, azimuth=225)
+                # Insert between the 2D plots and the fall counter
+                main_layout.insertWidget(1, gl_widget, stretch=5)
+                self._gl_view = gl_widget
+
+                # Floor grid centred on the room
+                grid = gl.GLGridItem()
+                grid.setSize(x=3, y=5)
+                grid.setSpacing(x=0.5, y=0.5)
+                grid.translate(0, 2.0, 0)
+                gl_widget.addItem(grid)
+
+                # Boundary box wireframe
+                if boundary_box is not None:
+                    xmin, xmax, ymin, ymax, zmin, zmax = boundary_box
+                    box = gl.GLBoxItem(color=(80, 80, 200, 60))
+                    box.setSize(x=xmax - xmin, y=ymax - ymin, z=zmax - zmin)
+                    box.translate(xmin, ymin, zmin)
+                    gl_widget.addItem(box)
+
+                # Sensor marker at origin
+                sensor_dot = gl.GLScatterPlotItem(
+                    pos=np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+                    color=np.array([[1.0, 0.4, 0.0, 1.0]], dtype=np.float32),
+                    size=14, pxMode=True,
+                )
+                gl_widget.addItem(sensor_dot)
+
+                # Point cloud scatter (starts empty)
+                self._gl_scat = gl.GLScatterPlotItem(
+                    pos=np.zeros((1, 3), dtype=np.float32),
+                    color=np.zeros((1, 4), dtype=np.float32),
+                    size=5, pxMode=True,
+                )
+                gl_widget.addItem(self._gl_scat)
+
+            except ImportError:
+                print('[WARN] --plot3d requires PyOpenGL: pip install PyOpenGL')
+                self._gl_view = None
 
         # ── Timer ────────────────────────────────────────────────────────
         self._timer = QtCore.QTimer()
@@ -765,21 +905,28 @@ class RadarWindow:
             zs   = np.array([p['z']   for p in pts], dtype=np.float32)
             snrs = np.array([p['snr'] for p in pts], dtype=np.float32)
             colors = _snr_to_rgba(snrs)
-            self._scat_xy.setData(x=xs, y=ys, brush=[pg.mkBrush(*c) for c in colors])
-            self._scat_xz.setData(x=xs, y=zs, brush=[pg.mkBrush(*c) for c in colors])
+            # Pass Nx4 uint8 numpy array directly — avoids creating N QBrush objects
+            self._scat_xy.setData(x=xs, y=ys, brush=colors)
+            self._scat_xz.setData(x=xs, y=zs, brush=colors)
         else:
             self._scat_xy.setData(x=[], y=[])
             self._scat_xz.setData(x=[], y=[])
 
-        # ── Remove old track labels ───────────────────────────────────────
-        for item in self._track_items_xy:
-            self._plot_xy.removeItem(item)
-        for item in self._track_items_xz:
-            self._plot_xz.removeItem(item)
-        self._track_items_xy.clear()
-        self._track_items_xz.clear()
+        # ── Update trail buffers + remove gone tracks ─────────────────────
+        active_tids = {t['tid'] for t in tracks}
+        for gone in list(self._trails.keys()):
+            if gone not in active_tids:
+                del self._trails[gone]
+                if gone in self._trail_curves:
+                    self._plot_xy.removeItem(self._trail_curves[gone][0])
+                    self._plot_xz.removeItem(self._trail_curves[gone][1])
+                    del self._trail_curves[gone]
+                if gone in self._track_labels:
+                    self._plot_xy.removeItem(self._track_labels[gone][0])
+                    self._plot_xz.removeItem(self._track_labels[gone][1])
+                    del self._track_labels[gone]
 
-        # ── Draw tracks ───────────────────────────────────────────────────
+        # ── Draw tracks and trails (reuse existing scene items) ───────────
         for t in tracks:
             tid = t['tid']
             is_fall  = tid in fall_tids
@@ -788,6 +935,32 @@ class RadarWindow:
 
             h = heights.get(tid, {})
             cluster_h = h.get('maxZ', 0.0) - h.get('minZ', 0.0) if h else float('nan')
+            z_label = h.get('maxZ', t['z']) if h else t['z']
+
+            # Append current position to trail
+            if tid not in self._trails:
+                self._trails[tid] = collections.deque(maxlen=self.TRAIL_LEN)
+            self._trails[tid].append((t['x'], t['y'], z_label))
+
+            # Trail: reuse PlotCurveItem, only addItem on first appearance
+            trail = self._trails[tid]
+            if len(trail) >= 2:
+                txs = np.array([p[0] for p in trail], dtype=np.float32)
+                tys = np.array([p[1] for p in trail], dtype=np.float32)
+                tzs = np.array([p[2] for p in trail], dtype=np.float32)
+                trail_pen = pg.mkPen(color=(*color, 80), width=1.5)
+                if tid in self._trail_curves:
+                    self._trail_curves[tid][0].setData(x=txs, y=tys)
+                    self._trail_curves[tid][0].setPen(trail_pen)
+                    self._trail_curves[tid][1].setData(x=txs, y=tzs)
+                    self._trail_curves[tid][1].setPen(trail_pen)
+                else:
+                    ln_xy = pg.PlotCurveItem(x=txs, y=tys, pen=trail_pen)
+                    ln_xz = pg.PlotCurveItem(x=txs, y=tzs, pen=trail_pen)
+                    self._plot_xy.addItem(ln_xy)
+                    self._plot_xz.addItem(ln_xz)
+                    self._trail_curves[tid] = (ln_xy, ln_xz)
+
             label = f"T{tid}"
             if not math.isnan(cluster_h):
                 label += f"\nh={cluster_h:.2f}m"
@@ -796,28 +969,108 @@ class RadarWindow:
             elif is_faint:
                 label += "\n⚠ FAINT"
 
-            txt_xy = pg.TextItem(label, color=color, anchor=(0.5, 1.0))
-            txt_xy.setPos(t['x'], t['y'])
-            self._plot_xy.addItem(txt_xy)
-            self._track_items_xy.append(txt_xy)
-
+            # Labels: reuse TextItem, only addItem on first appearance
             # t['z'] from TLV 1010 is at ground level (tracker projection).
             # Place label at maxZ (top of cluster) so it sits on the person.
-            z_label = h.get('maxZ', t['z']) if h else t['z']
-            txt_xz = pg.TextItem(label, color=color, anchor=(0.5, 1.0))
-            txt_xz.setPos(t['x'], z_label)
-            self._plot_xz.addItem(txt_xz)
-            self._track_items_xz.append(txt_xz)
+            if tid in self._track_labels:
+                txt_xy, txt_xz = self._track_labels[tid]
+                txt_xy.setText(label)
+                txt_xy.setColor(color)
+                txt_xy.setPos(t['x'], t['y'])
+                txt_xz.setText(label)
+                txt_xz.setColor(color)
+                txt_xz.setPos(t['x'], z_label)
+            else:
+                txt_xy = pg.TextItem(label, color=color, anchor=(0.5, 1.0))
+                txt_xy.setPos(t['x'], t['y'])
+                self._plot_xy.addItem(txt_xy)
+                txt_xz = pg.TextItem(label, color=color, anchor=(0.5, 1.0))
+                txt_xz.setPos(t['x'], z_label)
+                self._plot_xz.addItem(txt_xz)
+                self._track_labels[tid] = (txt_xy, txt_xz)
 
-        # ── Fall / faint counters ─────────────────────────────────────────
+        # ── 3D GL update (only when --plot3d) ────────────────────────────
+        if self._gl_view is not None:
+            import pyqtgraph.opengl as gl
+
+            # Point cloud
+            if pts:
+                pos3d = np.column_stack([xs, ys, zs]).astype(np.float32)
+                col3d = (colors.astype(np.float32) / 255.0)
+                self._gl_scat.setData(pos=pos3d, color=col3d)
+            else:
+                self._gl_scat.setData(
+                    pos=np.zeros((1, 3), dtype=np.float32),
+                    color=np.zeros((1, 4), dtype=np.float32),
+                )
+
+            # Remove items for gone tracks
+            for gone in [tid for tid in self._gl_trails if tid not in active_tids]:
+                self._gl_view.removeItem(self._gl_trails.pop(gone))
+            for gone in [tid for tid in self._gl_boxes if tid not in active_tids]:
+                self._gl_view.removeItem(self._gl_boxes.pop(gone))
+
+            for t in tracks:
+                tid = t['tid']
+                is_fall  = tid in fall_tids
+                is_faint = tid in faint_tids
+                r, g, b = (0.86, 0.12, 0.12) if is_fall else \
+                          (0.86, 0.55, 0.0)  if is_faint else \
+                          (0.12, 0.35, 0.78)
+
+                # Trail
+                trail = self._trails.get(tid)
+                if trail and len(trail) >= 2:
+                    pos3d = np.array([[p[0], p[1], p[2]] for p in trail],
+                                     dtype=np.float32)
+                    if tid in self._gl_trails:
+                        self._gl_trails[tid].setData(pos=pos3d,
+                                                     color=(r, g, b, 0.5))
+                    else:
+                        line = gl.GLLinePlotItem(pos=pos3d,
+                                                 color=(r, g, b, 0.5),
+                                                 width=2.0, antialias=True)
+                        self._gl_view.addItem(line)
+                        self._gl_trails[tid] = line
+
+                # Person wireframe box (uses TLV 1012 height data)
+                h = heights.get(tid)
+                if h:
+                    minZ = h.get('minZ', 0.0)
+                    maxZ = h.get('maxZ', minZ + 0.3)
+                    edges = _person_box_edges(t['x'], t['y'], minZ, maxZ)
+                    if tid in self._gl_boxes:
+                        self._gl_boxes[tid].setData(pos=edges,
+                                                    color=(r, g, b, 0.9))
+                    else:
+                        box_line = gl.GLLinePlotItem(pos=edges,
+                                                     color=(r, g, b, 0.9),
+                                                     width=1.5,
+                                                     antialias=True,
+                                                     mode='lines')
+                        self._gl_view.addItem(box_line)
+                        self._gl_boxes[tid] = box_line
+
+        # ── Fall / faint counters + M3 flash ─────────────────────────────
         if fall_tids:
             self._total_falls += len(fall_tids)
             self._lbl_count.setText(str(self._total_falls))
             now_str = datetime.datetime.now().strftime('%H:%M:%S')
-            self._lbl_last.setText(f'última\n{now_str}')
+            self._lbl_last.setText(f'last\n{now_str}')
+            self._flash_until = time.time() + 2.0
+            self._flash_color = '#ffcccc'
         if faint_tids:
             self._total_faints += len(faint_tids)
             self._lbl_faint_count.setText(str(self._total_faints))
+            if not fall_tids:   # fall flash takes priority
+                self._flash_until = time.time() + 2.0
+                self._flash_color = '#ffe4b5'
+
+        # Apply or clear flash background
+        if time.time() < self._flash_until:
+            self._win.setStyleSheet(f'background-color: {self._flash_color};')
+        else:
+            self._win.setStyleSheet('')
 
         # ── Status bar ────────────────────────────────────────────────────
         pres_str = '● PRESENT' if presence else '○ empty'
@@ -849,10 +1102,11 @@ class RadarWindow:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
-               sensor_h, sensor_t, use_plot):
+               sensor_h, sensor_t, use_plot, ml_detector=None, z_offset=0.0):
     frame_count  = 0
     fall_count   = 0
     faint_count  = 0
+    ml_fall_count = 0
     print('\n--- Reading frames. Press Ctrl+C to stop. ---\n')
     try:
         while not stop_event.is_set():
@@ -866,6 +1120,17 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
             for p in frame['points']:
                 p['x'], p['y'], p['z'] = sensor_to_world(
                     p['x'], p['y'], p['z'], sensor_h, sensor_t)
+                p['z'] += z_offset
+
+            # Apply the same z_offset to tracks and heights (firmware world frame).
+            # Tracks come pre-transformed by the firmware using sensorPosition.
+            # If sensorPosition height is off, z_offset corrects both together.
+            if z_offset != 0.0:
+                for t in frame['tracks']:
+                    t['z'] += z_offset
+                for h in frame['heights'].values():
+                    h['maxZ'] += z_offset
+                    h['minZ'] += z_offset
 
             frame_count += 1
             tracks  = frame['tracks']
@@ -874,12 +1139,21 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
             # Fall / faint detection
             fall_tids  = set()
             faint_tids = set()
+            ml_fall_tids = set()
             active_tids = {t['tid'] for t in tracks}
             for t in tracks:
                 tid = t['tid']
                 h = heights.get(tid)  # None if no TLV 1012 data this frame
                 if h is None:
                     # No height data — skip to avoid false falls from h=0 fallback.
+                    fall_detector.bump_frame(tid)
+                    continue
+                # Ignore ghost tracks near standing persons: small vertical extent
+                # AND above floor level. A fallen person is also small vertically
+                # (0.07–0.15 m) but at floor level (maxZ < 0.8 m) — must pass through.
+                _h_extent = h.get('maxZ', 0) - h.get('minZ', 0)
+                _max_z    = h.get('maxZ', 0)
+                if _h_extent < 0.25 and _max_z > 0.8:
                     fall_detector.bump_frame(tid)
                     continue
                 is_fall, is_faint = fall_detector.update(tid, h, t)
@@ -893,7 +1167,20 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                     faint_count += 1
                     print(f'\n*** FAINT DETECTED — Track {tid} at '
                           f'({t["x"]:.2f}, {t["y"]:.2f}, {t["z"]:.2f}) m ***\n')
+
+                # ML detector (runs alongside rule-based, independent)
+                if ml_detector is not None and h is not None:
+                    pc = compute_pc_stats(frame['points'], frame['indices'], tid)
+                    is_fall_ml, prob_ml = ml_detector.update(tid, t, h, pc)
+                    if is_fall_ml:
+                        ml_fall_tids.add(tid)
+                        ml_fall_count += 1
+                        print(f'\n[ML] FALL DETECTED — Track {tid} '
+                              f'(p={prob_ml:.2f})\n')
+
             fall_detector.cleanup_old_tracks(active_tids)
+            if ml_detector is not None:
+                ml_detector.cleanup_old_tracks(active_tids)
 
             # Console
             pres = '● PRESENT' if frame['presence'] else '○ empty  '
@@ -905,6 +1192,8 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                 max_z = h.get('maxZ', float('nan'))
                 ref   = fall_detector.ref_maxz(tid)
                 flag  = ' ⚠FALL' if tid in fall_tids else (' ⚠FAINT' if tid in faint_tids else '')
+                if tid in ml_fall_tids:
+                    flag += ' [ML⚠]'
                 trk_strs.append(
                     f"T{tid}({t['x']:+.2f},{t['y']:+.2f}m "
                     f"maxZ={max_z:.2f} ref={ref:.2f} vz={t['vz']:+.2f}){flag}"
@@ -921,7 +1210,10 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
         pass
     finally:
         stop_event.set()
-        print(f'\nStopped. Frames: {frame_count}, Falls: {fall_count}, Faints: {faint_count}')
+        msg = f'\nStopped. Frames: {frame_count}, Falls: {fall_count}, Faints: {faint_count}'
+        if ml_detector is not None:
+            msg += f', ML falls: {ml_fall_count}'
+        print(msg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -935,23 +1227,40 @@ def main():
     parser.add_argument('--cli',  required=True, help='CLI serial port  (e.g. COM4 or /dev/ttyUSB0)')
     parser.add_argument('--data', required=True, help='Data serial port (e.g. COM3 or /dev/ttyUSB1)')
     parser.add_argument('--cfg',  default=None,  help='Path to .cfg file to send (optional)')
-    parser.add_argument('--plot', action='store_true', help='Show live PyQtGraph visualization')
+    parser.add_argument('--plot',   action='store_true', help='Show live 2D PyQtGraph visualization')
+    parser.add_argument('--plot3d', action='store_true', help='Add 3D OpenGL panel (requires PyOpenGL)')
     parser.add_argument('--log',  default=None,
                         help='Path to CSV log file. If omitted, auto-saves to logs/session_YYYYMMDD_HHMMSS.csv')
     parser.add_argument('--frame-period', type=float, default=0.05,
                         help='Expected frame period in seconds (default: 0.05 = 50ms = 20fps)')
-    parser.add_argument('--sensor-height', type=float, default=1.90,
-                        help='Sensor height above floor in meters (default: 1.90)')
+    parser.add_argument('--sensor-height', type=float, default=2.05,
+                        help='Sensor height above floor in meters (default: 2.05)')
     parser.add_argument('--sensor-tilt', type=float, default=15.0,
                         help='Sensor downward tilt in degrees (default: 15.0)')
+    parser.add_argument('--z-offset', type=float, default=0.0, metavar='METERS',
+                        help='Z correction in metres applied to all points and tracks '
+                             '(e.g. --z-offset -0.20 to shift down 20 cm). '
+                             'Use to calibrate when objects appear at the wrong height.')
+    # ML dataset collection
+    parser.add_argument('--ml-log', action='store_true',
+                        help='Use enhanced ML CSV logger (more columns: ax/ay/az, pc stats, label)')
+    parser.add_argument('--label-mode', action='store_true',
+                        help='Activate real-time keyboard labeling (requires --ml-log). '
+                             'Keys: f=fall  n=normal  s=sitting  w=walking')
+    # ML inference
+    parser.add_argument('--ml-model', default=None, metavar='PATH',
+                        help='Path to trained ML fall detector (.pkl or .pt). '
+                             'Runs alongside rule-based detector when provided.')
     args = parser.parse_args()
 
-    # Auto-generate log path if not provided
+    import os, datetime
+
+    # Auto-generate log path
     if args.log is None:
-        import os, datetime
         os.makedirs('logs', exist_ok=True)
         ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        args.log = f'logs/session_{ts}.csv'
+        prefix = 'ml_session' if args.ml_log else 'session'
+        args.log = f'logs/{prefix}_{ts}.csv'
         print(f'Auto-logging to {args.log}')
 
     # Send config if provided
@@ -971,22 +1280,51 @@ def main():
 
     reader        = FrameReader(data_ser)
     fall_detector = FallDetector(frame_period_s=args.frame_period)
-    logger        = CsvLogger(args.log)
+
+    # Choose logger
+    if args.ml_log:
+        if not _ML_LOGGER_AVAILABLE:
+            print('[ERROR] ml_logger.py not found in tools/. Cannot use --ml-log.')
+            sys.exit(1)
+        session_id = os.path.splitext(os.path.basename(args.log))[0]
+        logger = MlCsvLogger(args.log, session_id=session_id,
+                              label_mode=args.label_mode)
+    else:
+        if args.label_mode:
+            print('[WARN] --label-mode has no effect without --ml-log.')
+        logger = CsvLogger(args.log)
+
+    # ML fall detector (optional, runs alongside rule-based)
+    ml_detector = None
+    if args.ml_model:
+        if not _ML_INFERENCE_AVAILABLE:
+            print('[WARN] ml_inference.py not found. Ignoring --ml-model.')
+        elif not _ML_LOGGER_AVAILABLE:
+            print('[WARN] ml_logger.py not found (needed for compute_pc_stats). '
+                  'Ignoring --ml-model.')
+        else:
+            try:
+                ml_detector = MlFallDetector(args.ml_model)
+            except Exception as e:
+                print(f'[WARN] Could not load ML model: {e}')
 
     import queue
     frame_queue = queue.Queue(maxsize=4)
     stop_event  = threading.Event()
 
-    if args.plot:
+    if args.plot or args.plot3d:
         # Qt event loop must run in the main thread.
         # Frame reader runs in a daemon background thread.
-        window = RadarWindow(frame_queue, stop_event)
+        bbox = parse_boundary_box(args.cfg)
+        window = RadarWindow(frame_queue, stop_event, boundary_box=bbox,
+                             plot3d=args.plot3d)
         window.show()
 
         reader_thread = threading.Thread(
             target=_read_loop,
             args=(reader, fall_detector, logger, frame_queue, stop_event,
                   args.sensor_height, args.sensor_tilt, True),
+            kwargs={'ml_detector': ml_detector, 'z_offset': args.z_offset},
             daemon=True,
         )
         reader_thread.start()
@@ -1000,7 +1338,8 @@ def main():
     else:
         try:
             _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
-                       args.sensor_height, args.sensor_tilt, False)
+                       args.sensor_height, args.sensor_tilt, False,
+                       ml_detector=ml_detector, z_offset=args.z_offset)
         finally:
             data_ser.close()
             logger.close()
