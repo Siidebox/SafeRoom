@@ -19,6 +19,9 @@ data/captures/*.csv
 *.swp
 *.swo
 
+# Claude Code local config
+.claude/settings.local.json
+
 # System
 .DS_Store
 Thumbs.db
