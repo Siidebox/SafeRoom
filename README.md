@@ -78,34 +78,26 @@ python tools/radar_reader.py --cli COM4 --data COM3
 ### With config + live 2D plot
 
 ```bash
-python tools/radar_reader.py --cli COM4 --data COM3 \
-  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
-  --plot
+python tools/radar_reader.py --cli COM4 --data COM3 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --plot
 ```
 
 ### With 3D OpenGL panel
 
 ```bash
-python tools/radar_reader.py --cli COM4 --data COM3 \
-  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
-  --plot --plot3d
+python tools/radar_reader.py --cli COM4 --data COM3 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --plot --plot3d
 ```
 
 ### With CSV log + ML labeling (dataset collection)
 
 ```bash
-python tools/radar_reader.py --cli COM4 --data COM3 \
-  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
-  --ml-log --label-mode
-# Keys during session: f=fall  n=normal  s=sitting  w=walking
+python tools/radar_reader.py --cli COM4 --data COM3 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --ml-log --label-mode
 ```
+Keys during session: `f`=fall · `n`=normal · `s`=sitting · `w`=walking
 
 ### With trained ML model (deployment)
 
 ```bash
-python tools/radar_reader.py --cli COM4 --data COM3 \
-  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
-  --ml-model models/xgb_fall.pkl
+python tools/radar_reader.py --cli COM4 --data COM3 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --ml-model models/xgb_fall.pkl
 ```
 
 ### All arguments
@@ -133,8 +125,7 @@ python tools/radar_reader.py --cli COM4 --data COM3 \
 ### Send config only (without reading data)
 
 ```bash
-python tools/send_config.py --port COM4 \
-  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg
+python tools/send_config.py --port COM4 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg
 ```
 
 ### Basic UART connectivity test
