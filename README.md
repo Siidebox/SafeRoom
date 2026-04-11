@@ -1,76 +1,171 @@
-# SafeRoom - Indoor Presence Monitoring with mmWave Radar
-> [!IMPORTANT]  
-> Not finished
+# SafeRoom — Indoor Monitoring with mmWave Radar
 
-Privacy-oriented indoor presence and movement monitoring system using a millimeter-wave radar sensor.
+> [!IMPORTANT]
+> Work in progress — dataset collection and ML training pending.
+
+Privacy-preserving indoor presence, immobility, and fall detection system using a millimeter-wave radar sensor. Designed for elderly-care scenarios with local/edge processing and no cameras required.
 
 ## Hardware
 
-- **Radar**: Texas Instruments IWR6843AOPEVM Rev G (Out-of-Box Demo, SDK 3.6)
-- **Processing**: Raspberry Pi 5 (8 GB RAM)
-- **Connection**: USB (CP2105 dual UART bridge)
+| Device | Role |
+|--------|------|
+| TI IWR6843AOPEVM (AOP variant) | Primary sensor |
+| Raspberry Pi 5 (8 GB) | Edge processing host |
+| USB CP2105 dual UART bridge | PC/RPi ↔ radar link |
 
-## Project Structure
+## Repository Structure
+
 ```
-mmwave-project/
-├── config/             # Radar configuration files (.cfg)
-├── scripts/            # Utility and test scripts
-│   └── basic_read.py   # Basic communication test
-├── src/                # Main source code
-│   └── radar/          # Radar communication module
-├── data/               # Captured data (not tracked in git)
-│   └── captures/
-├── docs/               # Project documentation
-├── tests/              # Unit tests
-├── requirements.txt    # Python dependencies
-└── README.md
+SafeRoom/
+├── code/People_Tracking/
+│   └── 3D_People_Tracking/
+│       ├── chirp_configs/          # .cfg files sent to radar over UART
+│       │   └── SafeRoom_1p9m_4x6m.cfg  # active deployment config
+│       ├── prebuilt_binaries/      # flashable .bin
+│       └── src/6843/               # firmware source (CCS project)
+├── tools/                          # host-side Python tools
+│   ├── radar_reader.py             # main reader + visualizer + fall detector
+│   ├── send_config.py              # standalone config sender
+│   ├── ml_logger.py                # extended CSV logger for ML
+│   ├── label_session.py            # post-hoc labeling UI
+│   ├── feature_engineering.py      # sliding-window feature extraction
+│   ├── train_model.py              # LOSO-CV training (XGBoost, RF, LSTM)
+│   ├── evaluate_model.py           # thesis figures: ROC, confusion matrix…
+│   └── ml_inference.py             # MlFallDetector for deployment
+├── scripts/
+│   └── basic_read.py               # minimal UART connectivity test
+├── logs/                           # auto-saved CSV sessions (not tracked)
+└── models/                         # trained model files (not tracked)
 ```
 
 ## Quick Start
 
-### Prerequisites
+### Dependencies
 
-- Raspberry Pi OS (64-bit, Bookworm)
-- Python 3 with virtual environment
-- IWR6843AOPEVM flashed with Out-of-Box Demo (SDK 3.6)
-
-### Setup
 ```bash
-git clone https://github.com/YOUR_USERNAME/mmwave-project.git
-cd mmwave-project
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Core
+pip install pyserial numpy pyqtgraph PyQt5
+
+# 3D visualization
+pip install PyOpenGL
+
+# ML pipeline
+pip install xgboost scikit-learn joblib matplotlib
+
+# Optional: deep learning models
+pip install torch
 ```
 
-### Udev Rules (fixed port names)
+### Serial ports
+
+| Port (Windows) | Port (Linux/RPi) | Function | Baud |
+|----------------|------------------|----------|------|
+| COM4 | /dev/ttyUSB0 | CLI — send config commands | 115200 |
+| COM3 | /dev/ttyUSB1 | Data — receive TLV frames | 921600 |
+
+---
+
+## Running the Radar Reader
+
+`radar_reader.py` is the main tool. It sends the config, parses TLV output, visualizes tracks, and runs fall detection.
+
+### Minimal — read only, no plot
+
 ```bash
-sudo bash -c 'cat > /etc/udev/rules.d/99-mmwave.rules << UDEV
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea70", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="mmwave_cli"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea70", ENV{ID_USB_INTERFACE_NUM}=="01", SYMLINK+="mmwave_data"
-UDEV'
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+python tools/radar_reader.py --cli COM4 --data COM3
 ```
 
-### User Permissions
+### With config + live 2D plot
+
 ```bash
-sudo usermod -aG dialout $USER
-# Log out and back in
+python tools/radar_reader.py --cli COM4 --data COM3 \
+  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
+  --plot
 ```
 
-### Run Basic Test
+### With 3D OpenGL panel
+
 ```bash
-source venv/bin/activate
+python tools/radar_reader.py --cli COM4 --data COM3 \
+  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
+  --plot --plot3d
+```
+
+### With CSV log + ML labeling (dataset collection)
+
+```bash
+python tools/radar_reader.py --cli COM4 --data COM3 \
+  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
+  --ml-log --label-mode
+# Keys during session: f=fall  n=normal  s=sitting  w=walking
+```
+
+### With trained ML model (deployment)
+
+```bash
+python tools/radar_reader.py --cli COM4 --data COM3 \
+  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
+  --ml-model models/xgb_fall.pkl
+```
+
+### All arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--cli PORT` | *(required)* | CLI serial port (e.g. `COM4` or `/dev/ttyUSB0`) |
+| `--data PORT` | *(required)* | Data serial port (e.g. `COM3` or `/dev/ttyUSB1`) |
+| `--cfg PATH` | — | `.cfg` file to send at startup |
+| `--plot` | off | Live 2D PyQtGraph visualization |
+| `--plot3d` | off | Add 3D OpenGL panel (requires PyOpenGL) |
+| `--log PATH` | auto | CSV log path. Auto-saves to `logs/session_YYYYMMDD_HHMMSS.csv` if omitted |
+| `--frame-period SEC` | 0.05 | Expected frame period in seconds |
+| `--sensor-height M` | 2.05 | Sensor height above floor (metres) |
+| `--sensor-tilt DEG` | 15.0 | Sensor downward tilt (degrees) |
+| `--z-offset M` | 0 | Z correction applied to all points/tracks. Negative = shift down |
+| `--ml-log` | off | Use extended ML CSV logger (adds ax/ay/az, point cloud stats, label column) |
+| `--label-mode` | off | Real-time keyboard labeling thread (requires `--ml-log`) |
+| `--ml-model PATH` | — | Trained model (`.pkl` or `.pt`). Runs alongside rule-based detector |
+
+---
+
+## Other Tools
+
+### Send config only (without reading data)
+
+```bash
+python tools/send_config.py --port COM4 \
+  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg
+```
+
+### Basic UART connectivity test
+
+```bash
 python scripts/basic_read.py
 ```
 
-## Serial Port Mapping
+---
 
-| Port | Symlink | Function | Baud Rate |
-|------|---------|----------|-----------|
-| /dev/ttyUSB0 | /dev/mmwave_cli | CLI / CFG (commands) | 115200 |
-| /dev/ttyUSB1 | /dev/mmwave_data | Data (point cloud) | 921600 |
+## ML Workflow
+
+```
+1. Record   python tools/radar_reader.py ... --ml-log --label-mode
+2. Label    python tools/label_session.py logs/session_*.csv        (or use --label-mode above)
+3. Extract  python tools/feature_engineering.py logs/
+4. Train    python tools/train_model.py
+5. Eval     python tools/evaluate_model.py
+6. Deploy   python tools/radar_reader.py ... --ml-model models/xgb_fall.pkl
+```
+
+---
+
+## Flashing the Firmware
+
+1. Flash `code/People_Tracking/3D_People_Tracking/prebuilt_binaries/3D_people_track_6843_demo.bin` using **TI UniFlash**.
+2. Connect UART (CLI port at 115200 baud).
+3. Send config file line-by-line; end with `sensorStart`.
+4. Parse TLV output on data port at 921600 baud.
+
+---
 
 ## License
 
