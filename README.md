@@ -1,6 +1,7 @@
 # SafeRoom - Indoor Presence Monitoring with mmWave Radar
 > [!IMPORTANT]  
-Not finished
+> Not finished
+
 Privacy-oriented indoor presence and movement monitoring system using a millimeter-wave radar sensor.
 
 ## Hardware
