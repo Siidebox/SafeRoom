@@ -113,7 +113,7 @@ python tools/radar_reader.py --cli COM4 --data COM3 --cfg code/People_Tracking/3
 | `--frame-period SEC` | 0.05 | Expected frame period in seconds |
 | `--sensor-height M` | 2.05 | Sensor height above floor (metres) |
 | `--sensor-tilt DEG` | 15.0 | Sensor downward tilt (degrees) |
-| `--z-offset M` | 0 | Z correction applied to all points/tracks. Negative = shift down |
+| `--z-offset M` | 0 | Z correction in **metres** applied to all points/tracks. Negative = shift down (e.g. `--z-offset -0.20` = −20 cm) |
 | `--ml-log` | off | Use extended ML CSV logger (adds ax/ay/az, point cloud stats, label column) |
 | `--label-mode` | off | Real-time keyboard labeling thread (requires `--ml-log`) |
 | `--ml-model PATH` | — | Trained model (`.pkl` or `.pt`). Runs alongside rule-based detector |
