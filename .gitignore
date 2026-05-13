@@ -1,7 +1,5 @@
-# Virtual environment
+# --- Python ---
 venv/
-
-# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -9,19 +7,64 @@ __pycache__/
 dist/
 build/
 
-# Captured data (can be large)
-data/captures/*.bin
-data/captures/*.csv
-
-# IDE
+# --- IDE ---
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Claude Code local config
+# --- Claude Code local config ---
 .claude/settings.local.json
 
-# System
+# --- System ---
 .DS_Store
 Thumbs.db
+
+# --- Captured data / sessions (large, not source) ---
+data/captures/
+logs/
+models/
+*.csv
+
+# --- Office documents (presentations, drafts, meeting notes) ---
+*.docx
+*.doc
+*.pptx
+*.ppt
+*.xlsx
+*.xls
+*.pdf
+
+# --- Videos / media (demos, recordings) ---
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.gif
+
+# --- Large third-party reference material (kept locally, not in repo) ---
+doc/
+measures/
+referencias/
+guides/
+
+# --- Dated session / progress directories ---
+11-11/
+25-11/
+9-3/
+2026-04-16/
+2026-05-1/
+
+# --- Personal scratch folder ---
+cosas_varias/
+
+# --- Compressed source snapshots ---
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.rar
+
+# --- Allow firmware binary (the deliverable) ---
+!code/People_Tracking/3D_People_Tracking/prebuilt_binaries/*.bin

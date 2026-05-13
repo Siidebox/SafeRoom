@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<projectSpec>
+    <applicability>
+        <when>
+            <context
+                deviceFamily="ARM"
+                deviceId="Cortex M.IWRL6432"
+            />
+        </when>
+    </applicability>
+
+    <project
+        title="IWRL6432 Capon2D People Tracking"
+        name = "IWRL6432_Capon2D_People_Tracking"
+        products="sysconfig:1.24.00.00;MMWAVE-L-SDK:05.05.04.02"
+        configurations="
+            Release, 
+        "
+        connection="TIXDS110_Connection.xml"
+        toolChain="TICLANG"
+        cgtVersion="3.2.2.LTS"
+        device="Cortex M.IWRL6432"
+        deviceCore="Cortex_M4F_0"
+        ignoreDefaultDeviceSettings="true"
+        ignoreDefaultCCSSettings="true"
+        endianness="little"
+        outputFormat="ELF"
+        outputType="executable"
+
+        compilerBuildOptions="
+		    -I${PROJECT_ROOT}
+            -I${CG_TOOL_ROOT}/include/c
+            -I${MCU_PLUS_SDK_PATH}/source
+            -I${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection
+            -I${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection/source
+            -I${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection/source/dpc
+            -I${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection/source/test
+            -I${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection/source/mmwave_control
+            -I${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection/source/power_management
+            -I${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection/source/calibrations
+            -I${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection/source/utils
+            -I${MCU_PLUS_SDK_PATH}/source/kernel/freertos/FreeRTOS-Kernel/include
+            -I${MCU_PLUS_SDK_PATH}/source/kernel/freertos/portable/TI_ARM_CLANG/ARM_CM4F
+            -I${MCU_PLUS_SDK_PATH}/source/kernel/freertos/config/xwrL64xx/m4f
+            -I${MMW_DFP_PATH}
+            -mcpu=cortex-m4
+            -mfloat-abi=hard
+            -mno-unaligned-access
+            -mthumb
+            -Wall
+            -Werror
+            -g
+            -Wno-gnu-variable-sized-type-not-at-end
+            -Wno-unused-function
+            -DSOC_XWRL64XX
+            -DGTRACK_3D=1
+            -DTRACKER_MAX_NUM_TR=10
+        "
+        linkerBuildOptions="
+            -i${MCU_PLUS_SDK_PATH}
+            -i${MCU_PLUS_SDK_PATH}/source/alg/gtrack/lib
+            -i${MCU_PLUS_SDK_PATH}/source/alg/featExtract/spectrumBased/lib
+            -i${MCU_PLUS_SDK_PATH}/source/alg/classifier/targetClassifier/lib
+            -i${MCU_PLUS_SDK_PATH}/source/kernel/freertos/lib
+            -i${MCU_PLUS_SDK_PATH}/source/drivers/lib
+            -i${MCU_PLUS_SDK_PATH}/source/datapath/lib
+            -i${MCU_PLUS_SDK_PATH}/source/board/lib
+            -i${MCU_PLUS_SDK_PATH}/source/control/lib
+            -i${MCU_PLUS_SDK_PATH}/source/utils/lib
+            -i${MMW_DFP_PATH}/mmwavelink/lib/xWRLx432
+            -i${MMW_DFP_PATH}/fecsslib/lib/xWRLx432		
+            -i${CG_TOOL_ROOT}/lib
+            -m=${ProjName}.${ConfigName}.map
+            --ram_model
+            --reread_libs
+        "
+
+        postBuildStep="$(MAKE) -C ${CCS_PROJECT_DIR} -f makefile_ccs_bootimage_gen OUTNAME=${BuildArtifactFileBaseName} PROFILE=${ConfigName} MCU_PLUS_SDK_PATH=${MCU_PLUS_SDK_PATH} CG_TOOL_ROOT=${CG_TOOL_ROOT} CCS_INSTALL_DIR=${CCS_INSTALL_DIR} CCS_IDE_MODE=${CCS_IDE_MODE}"
+
+        enableSysConfigTool="true"
+        sysConfigBuildOptions="
+            --context m4fss0-0 --part Default --package FCCSP
+        "
+
+        description="Tracking Demo which leverages 2D Capon Beamforming">
+
+        <configuration name="Release"
+            compilerBuildOptions="
+                -Os
+            "
+            linkerBuildOptions="
+                -lalg_gtrack3d.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -lalg_featExtract.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -lalg_classifier.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -lfreertos.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -ldatapath_tracker3d.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -ldrivers.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -lboard.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -lcontrol.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -lutils.xwrL64xx.m4f.ti-arm-clang.release.lib
+                -lmmwavelink_m4.lib
+                -lfecss_rom_m4.lib
+                -lfecss_patch_m4.lib
+                -llibc.a
+            "
+        ></configuration>
+        <pathVariable name="MCU_PLUS_SDK_PATH" path="${COM_TI_MMWAVE_L_SDK_INSTALL_DIR}" scope="project" />
+        <pathVariable name="MMW_DFP_PATH" path="${COM_TI_MMWAVE_L_SDK_INSTALL_DIR}/firmware/mmwave_dfp" scope="project" />
+        
+        <!-- SDK Files -->
+        <file path="${MCU_PLUS_SDK_PATH}/docs/api_guide_xwrL64xx/MOTION_AND_PRESENCE_DETECTION_DEMO.html" openOnCreation="false" excludeFromBuild="false" targetName="README.html" action="copy" />
+        <file path="${MCU_PLUS_SDK_PATH}/examples/mmw_demo/motion_and_presence_detection/xwrL64xx-aop/m4fss0-0_freertos/ti-arm-clang/syscfg_c.rov.xs" openOnCreation="false" excludeFromBuild="false" action="copy" />
+
+        <!-- DPU Files -->
+        <file path="datapath/dpu/rangeproc/rangeprochwa.c" targetDirectory="datapath/dpu/rangeproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/rangeproc/rangeprochwa.h" targetDirectory="datapath/dpu/rangeproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/rangeproc/rangeprochwa_internal.h" targetDirectory="datapath/dpu/rangeproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/rangeproc/rangeproc_internal.h" targetDirectory="datapath/dpu/rangeproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/rangeproc/rangeproc_common.h" targetDirectory="datapath/dpu/rangeproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/cfarproc/cfarprochwa.c" targetDirectory="datapath/dpu/cfarproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/cfarproc/cfarprochwa.h" targetDirectory="datapath/dpu/cfarproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/cfarproc/range_comp.c" targetDirectory="datapath/dpu/cfarproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/cfarproc/range_comp.h" targetDirectory="datapath/dpu/cfarproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/cfarproc/cfarproccommon.h" targetDirectory="datapath/dpu/cfarproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/cfarproc/cfarprochwainternal.h" targetDirectory="datapath/dpu/cfarproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/doaproc/doaproc.c" targetDirectory="datapath/dpu/doaproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/doaproc/doaproc.h" targetDirectory="datapath/dpu/doaproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/doaproc/doaproccommon.h" targetDirectory="datapath/dpu/doaproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/doaproc/doaprocinternal.h" targetDirectory="datapath/dpu/doaproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/trackerproc/trackerproc.c" targetDirectory="datapath/dpu/trackerproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/trackerproc/trackerproc.h" targetDirectory="datapath/dpu/trackerproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/mpdproc.c" targetDirectory="datapath/dpu/mpdproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/mpdproc.h" targetDirectory="datapath/dpu/mpdproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/define.h" targetDirectory="datapath/dpu/mpdproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/dpif/dp_error.h" targetDirectory="datapath/dpu/mpdproc/v0/dpif/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/dpif/dpif_types.h" targetDirectory="datapath/dpu/mpdproc/v0/dpif/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/dpif/dpif_pointcloud.h" targetDirectory="datapath/dpu/mpdproc/v0/dpif/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/boundaryZones/boundaryArc.c" targetDirectory="datapath/dpu/mpdproc/v0/boundaryZones/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/boundaryZones/boundaryArc.h" targetDirectory="datapath/dpu/mpdproc/v0/boundaryZones/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/boundaryZones/boundaryZoneTemplate.c" targetDirectory="datapath/dpu/mpdproc/v0/boundaryZones/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/boundaryZones/boundaryZoneTemplate.h" targetDirectory="datapath/dpu/mpdproc/v0/boundaryZones/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/dbscan.c" targetDirectory="datapath/dpu/mpdproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="datapath/dpu/mpdproc/dbscan.h" targetDirectory="datapath/dpu/mpdproc/v0/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        
+
+        <!-- ALG Files -->
+        <file path="alg/caponBeamforming/caponBeamforming.h" targetDirectory="alg/caponBeamforming/"  openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="alg/caponBeamforming/src/caponbeamforming_doppler_proc.h" targetDirectory="alg/caponBeamforming/src/"  openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="alg/caponBeamforming/covariancehwa.h" targetDirectory="alg/caponBeamforming/"  openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="alg/caponBeamforming/src/caponbeamforming_doppler_proc.c" targetDirectory="alg/caponBeamforming/src/"  openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="alg/caponBeamforming/src/caponbeamforminghwa.c" targetDirectory="alg/caponBeamforming/src/"  openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="alg/caponBeamforming/src/covariancehwa.c" targetDirectory="alg/caponBeamforming/src/" openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="alg/caponBeamforming/src/caponbeamforming_internal.h" targetDirectory="alg/caponBeamforming/src/"  openOnCreation="false" excludeFromBuild="false" action="copy"/>
+        <file path="alg/caponBeamforming/src/covariancehwa_internal.h" targetDirectory="alg/caponBeamforming/src/"  openOnCreation="false" excludeFromBuild="false" action="copy"/>
+
+
+        <!-- Demo Specific Files -->
+    	<file path="source/calibrations/mmw_flash_cal.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/calibrations/factory_cal.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/calibrations/range_phase_bias_measurement.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/mmwave_control/interrupts.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/utils/mmw_demo_utils.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/utils/tracker_utils.c" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/test/ADC_testbuf.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/power_management/power_management.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/mmwave_control/monitors.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/mmwave_control/mmwave_control_config.c"  openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/profile_switch.h" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/dpc/dpc.c" targetDirectory="source/dpc/" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/dpc/dpc.h" targetDirectory="source/dpc/" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/mmw_cli.c" targetDirectory="source/" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/mmw_cli.h" targetDirectory="source/" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/mmw_res.h" targetDirectory="source/" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/motion_detect.c" targetDirectory="source/" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="source/motion_detect.h" targetDirectory="source/" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="main.c" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="IWRL6432_Capon2D_People_Tracking.syscfg" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="linker.cmd" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        <file path="makefile_ccs_bootimage_gen" openOnCreation="false" excludeFromBuild="false" action="copy" />
+        
+    </project>
+</projectSpec>

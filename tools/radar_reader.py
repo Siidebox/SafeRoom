@@ -333,76 +333,55 @@ class FrameReader:
 
 class FallDetector:
     """
-    Three-tier fall / faint detector using maxZ and Kalman vz.
+    Two-tier fall / faint detector using maxZ and Kalman vz.
 
-    Tier 1 — FAST fall: sustained strong vz spike (≥ 5 frames at ≤ -0.80 m/s).
-             No reference required, short warmup (5 frames).
-             No maxZ ceiling constraint — the vz spike occurs while the person is
-             still at mid-height (1.3–1.5 m). By the time maxZ < 1.0 m, the fall
-             is over and vz has already decayed to near zero.
+    Tier 1 — FAST fall: sustained vz spike below threshold for ≥ FAST_PERSIST frames.
+             No reference required, short warmup. Catches kinetic falls.
+             Calibrated: sitting -0.83 m/s, crouching -1.05 m/s, real fall -1.28+ m/s.
 
-    Tier 2 — SLOW fall: person was standing (ref_maxz ≥ MIN_STANDING_MAXZ) and
-             has been at floor level (maxZ < 60% of reference) for 20 s.
-             No vz requirement — catches slow collapses and missed kinetic falls.
-
-    Tier 3 — FAINT/unconscious: person is at floor level and maxZ is stable
-             (variance < FAINT_STABILITY m over FAINT_WINDOW s) for FAINT_PERSIST s.
-             Uses a session-level flag so a new TID that spawns on the floor still
-             triggers if the person was seen standing earlier in the session.
+    Tier 2 — FAINT/unconscious: person at floor level (maxZ < 0.80 m) with stable
+             height (std < 0.10 m) for 30 s. Requires session-level standing flag.
+             Catches unconscious/immobile persons after any fall, including missed Tier-1.
 
     update() returns (is_fall: bool, is_faint: bool).
-
-    Calibration from log data:
-      sitting vz ~ -0.55 m/s, real fall vz ~ -0.94 to -1.58 m/s → gap at -0.80
-      Kalman vz reports ~-0.30 m/s even when lying still → use maxZ variance instead
     """
 
-    REFERENCE_WINDOW   = 30.0   # s — rolling max window for standing reference
-    FALL_RATIO         = 0.60   # Tier 2: maxZ must drop to <60% of reference
-    ABSOLUTE_CEILING   = 1.0    # m — used for Tier 2 low-posture condition
-    MIN_STANDING_MAXZ  = 1.2    # m — reference for Tier 2; session flag for Tier 3
-    COOLDOWN           = 8.0    # s between fall detections per track
-    MIN_FRAMES         = 20     # warm-up for Tier 2/3
+    MIN_STANDING_MAXZ  = 1.2    # m — session standing flag threshold for Tier 2
+    COOLDOWN           = 25.0   # s between fall detections per track
+    MIN_FRAMES         = 20     # warm-up for Tier 2
 
-    # Tier 1 — fast fall (NO reference, NO maxZ ceiling, short warmup)
-    # Calibration 2026-04-10: sitting reaches -0.83 m/s sustained → raised threshold
-    # Gap: sitting max -0.83, walking max -0.90 → threshold -1.00 (confirmed after Group B)
-    FAST_VZ_THRESHOLD  = -1.10  # m/s — above crouching max (-1.05), sitting (-0.83), walking (-0.90)
-    FAST_PERSIST       = 2      # frames — Kalman smoother limits sustained spikes; 2 balances sensitivity
-    MIN_FRAMES_FAST    = 5      # warmup for Tier 1 only (track may spawn mid-fall)
+    # Tier 1 — FAST fall
+    FAST_VZ_THRESHOLD  = -1.15  # m/s — gap: crouching max -1.05, real fall -1.28+
+    FAST_PERSIST       = 3      # consecutive frames required
+    MIN_FRAMES_FAST    = 5      # shorter warmup (track may spawn mid-fall)
 
-    # Tier 2 — slow / gradual fall (reference required, no vz constraint)
-    SLOW_PERSIST       = 400    # frames (20 s at 20fps)
-
-    # Tier 3 — faint / unconscious (maxZ stability, session standing flag)
-    FAINT_CEILING      = 0.80   # m — person must be this low
-    FAINT_STABILITY    = 0.10   # m — max allowed maxZ std-dev over stability window
+    # Tier 2 — FAINT/unconscious
+    FAINT_CEILING      = 0.80   # m
+    FAINT_STABILITY    = 0.10   # m — max maxZ std-dev over stability window
     FAINT_WINDOW       = 5.0    # s — stability measurement window
-    FAINT_PERSIST      = 600    # frames (30 s at 20fps)
+    FAINT_PERSIST      = 600    # frames (30 s at 20 fps)
     FAINT_COOLDOWN     = 60.0   # s between faint detections per track
 
     def __init__(self, frame_period_s: float = 0.05):
-        self._maxz_hist      = {}   # tid → deque of (maxZ, timestamp) — 30s window
-        self._maxz_stab      = {}   # tid → deque of maxZ values — FAINT_WINDOW
-        self._last_det       = {}   # tid → timestamp of last fall detection
-        self._last_faint     = {}   # tid → timestamp of last faint detection
-        self._frame_cnt      = {}   # tid → warm-up frames
-        self._fast_count     = {}   # tid → consecutive Tier 1 frames
-        self._slow_count     = {}   # tid → consecutive Tier 2 frames
-        self._still_count    = {}   # tid → consecutive Tier 3 frames
-        self._last_peak_vz   = {}   # tid → peak_vz of last fall (for logging)
-        self._session_stood  = False  # True once any TID's ref_maxz ≥ MIN_STANDING_MAXZ
+        self._maxz_hist    = {}   # tid → deque of (maxZ, timestamp)
+        self._maxz_stab    = {}   # tid → deque of maxZ values — FAINT_WINDOW
+        self._last_det     = {}   # tid → timestamp of last fall detection
+        self._last_faint   = {}   # tid → timestamp of last faint detection
+        self._frame_cnt    = {}   # tid → warm-up frames
+        self._fast_count   = {}   # tid → consecutive Tier-1 frames
+        self._still_count  = {}   # tid → consecutive Tier-2 frames
+        self._last_peak_vz = {}   # tid → peak_vz of last fall (for logging)
+        self._session_stood = False  # True once any TID's maxZ ≥ MIN_STANDING_MAXZ
 
     def _init_tid(self, tid: int):
         if tid not in self._maxz_hist:
-            self._maxz_hist[tid]   = collections.deque()
-            self._maxz_stab[tid]   = collections.deque()
-            self._last_det[tid]    = 0.0
-            self._last_faint[tid]  = 0.0
-            self._frame_cnt[tid]   = 0
-            self._fast_count[tid]  = 0
-            self._slow_count[tid]  = 0
-            self._still_count[tid] = 0
+            self._maxz_hist[tid]    = collections.deque()
+            self._maxz_stab[tid]    = collections.deque()
+            self._last_det[tid]     = 0.0
+            self._last_faint[tid]   = 0.0
+            self._frame_cnt[tid]    = 0
+            self._fast_count[tid]   = 0
+            self._still_count[tid]  = 0
             self._last_peak_vz[tid] = 0.0
 
     def update(self, tid: int, height: dict, track: dict):
@@ -419,28 +398,24 @@ class FallDetector:
         self._init_tid(tid)
         self._frame_cnt[tid] += 1
 
-        # ── Rolling reference window (30s max) ───────────────────────────
+        # Rolling maxZ history (for session standing flag)
         buf = self._maxz_hist[tid]
         buf.append((max_z, now))
-        cutoff = now - self.REFERENCE_WINDOW
+        cutoff = now - 30.0
         while buf and buf[0][1] < cutoff:
             buf.popleft()
 
-        ref_maxz = max(z for z, _ in buf) if buf else 0.0
-
-        # Update session-level standing flag
-        if ref_maxz >= self.MIN_STANDING_MAXZ:
+        if max_z >= self.MIN_STANDING_MAXZ:
             self._session_stood = True
 
-        # ── Stability window (FAINT_WINDOW s) ────────────────────────────
+        # Stability window for Tier-2
         stab = self._maxz_stab[tid]
         stab.append(max_z)
-        max_stab_len = int(self.FAINT_WINDOW / 0.05)  # assume 20fps
+        max_stab_len = int(self.FAINT_WINDOW / 0.05)
         while len(stab) > max_stab_len:
             stab.popleft()
 
-        # ── Tier 1 — fast fall (no reference, short warmup) ──────────────
-        # vz spike is the primary signal; maxZ may still be > 1.0 m during fall
+        # ── Tier 1 — FAST fall ───────────────────────────────────────────
         if self._frame_cnt[tid] >= self.MIN_FRAMES_FAST:
             if vz <= self.FAST_VZ_THRESHOLD:
                 self._fast_count[tid] += 1
@@ -450,19 +425,7 @@ class FallDetector:
         if self._frame_cnt[tid] < self.MIN_FRAMES:
             return False, False
 
-        # ── Tier 2 — slow / gradual fall (reference required) ────────────
-        slow_cond = (
-            ref_maxz >= self.MIN_STANDING_MAXZ
-            and max_z < self.FALL_RATIO * ref_maxz
-            and max_z < self.ABSOLUTE_CEILING
-        )
-        if slow_cond:
-            self._slow_count[tid] += 1
-        else:
-            self._slow_count[tid] = 0
-
-        # ── Tier 3 — faint / unconscious ─────────────────────────────────
-        # Use maxZ variance over stability window, not Kalman vz (which drifts)
+        # ── Tier 2 — FAINT/unconscious ───────────────────────────────────
         if len(stab) >= max_stab_len:
             vals = list(stab)
             mean = sum(vals) / len(vals)
@@ -483,16 +446,10 @@ class FallDetector:
         # ── Detection ────────────────────────────────────────────────────
         fall_cooldown = (now - self._last_det[tid]) < self.COOLDOWN
 
-        fast_fall = (
+        fall = (
             not fall_cooldown
             and self._fast_count[tid] >= self.FAST_PERSIST
         )
-        slow_fall = (
-            not fall_cooldown
-            and self._slow_count[tid] >= self.SLOW_PERSIST
-        )
-        fall = fast_fall or slow_fall
-
         faint = (
             not fall_cooldown
             and (now - self._last_faint[tid]) >= self.FAINT_COOLDOWN
@@ -500,14 +457,13 @@ class FallDetector:
         )
 
         if fall:
-            self._last_peak_vz[tid] = vz
-            self._last_det[tid]     = now
-            self._fast_count[tid]   = 0
-            self._slow_count[tid]   = 0
+            self._last_peak_vz[tid]  = vz
+            self._last_det[tid]      = now
+            self._fast_count[tid]    = 0
 
         if faint:
-            self._last_faint[tid]  = now
-            self._still_count[tid] = 0
+            self._last_faint[tid]   = now
+            self._still_count[tid]  = 0
 
         return fall, faint
 
@@ -524,7 +480,6 @@ class FallDetector:
                 del self._last_faint[tid]
                 del self._frame_cnt[tid]
                 del self._fast_count[tid]
-                del self._slow_count[tid]
                 del self._maxz_stab[tid]
                 del self._still_count[tid]
                 del self._last_peak_vz[tid]
@@ -1154,6 +1109,13 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                 _h_extent = h.get('maxZ', 0) - h.get('minZ', 0)
                 _max_z    = h.get('maxZ', 0)
                 if _h_extent < 0.25 and _max_z > 0.8:
+                    fall_detector.bump_frame(tid)
+                    continue
+                # Ignore tracks with too few points when above floor level.
+                # Ghost tracks have <10 points and maxZ > 0.8m.
+                # A person on the floor (faint) also has few points but maxZ < 0.8m — must pass through.
+                _n_pts = sum(1 for idx in frame['indices'] if idx == tid)
+                if _n_pts < 10 and _max_z > 0.8:
                     fall_detector.bump_frame(tid)
                     continue
                 is_fall, is_faint = fall_detector.update(tid, h, t)

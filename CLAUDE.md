@@ -184,13 +184,13 @@ Config files are named by board variant and range: e.g., `ISK_6m_default.cfg`, `
 
 | Parameter | Value | Reason |
 |-----------|-------|--------|
-| `frameCfg` period | 150 ms (6.7 fps) | UART bandwidth budget |
-| `trackingCfg` maxNumPoints | 100 | Cap UART output (see firmware note below) |
+| `frameCfg` period | 50 ms (20 fps) | Validated on RPi 5 (2026-05-12 smoke test): 0 drops with 250 maxNumPoints |
+| `trackingCfg` maxNumPoints | 250 | Raised post-firmware-cap (commit 9df12e6); cap is in `mss_main.c` |
 | `maxAcceleration` Z | 10.0 m/s² | Required to track free-fall (~9.8 m/s²) |
-| `staticRACfarCfg` thresholds | 15.0 / 25.0 | Prevent static clutter from flooding UART |
-| `allocationParam` pointsThre | 15 | Fallen person generates fewer points |
+| `staticRACfarCfg` thresholds | 8.0 / 15.0 | Prevent static clutter from flooding UART |
+| `allocationParam` pointsThre | 20 | Fallen person generates fewer points |
 | `boundaryBox` | -1.25 1.25 0.3 4.2 0.0 2.2 | Matches 4.5m×2.5m room |
-| `sensorPosition` | height=2.05m, azimuth=0, tilt=15° | Physically measured 2026-04-10, tripod in corner |
+| `sensorPosition` | height=2.04m, azimuth=0, tilt=10° | Re-measured 2026-04-20 (was 2.05m/15° on 2026-04-10), tripod in corner |
 
 Comments at the top of `SafeRoom_1p9m_4x6m.cfg` document every change from the `AOP_6m_default.cfg` baseline.
 
@@ -224,16 +224,16 @@ Comments at the top of `SafeRoom_1p9m_4x6m.cfg` document every change from the `
 
 **Height interpretation**: `maxZ - minZ` is the vertical extent of the radar cluster on a person (typically 0.3–0.5 m), not the person's absolute height. This relative value still works for fall detection.
 
-### UART bandwidth budget (at 921600 baud, 150 ms frame period)
+### UART bandwidth budget (at 921600 baud, 50 ms frame period)
 
-- Available: 13,824 bytes/frame
-- With 100 points × 8B + headers ≈ 1.5 KB → comfortable
-- Without the firmware cap: up to 750 points × 8B ≈ 7.1 KB → marginal, causes "Dropping frame" errors
+- Available: ~4,600 bytes/frame (921600 / 10 bits / 20 fps)
+- With 250 points × 8B + headers ≈ 2.2 KB → ~50% margin, validated 0 drops on RPi 5 (2026-05-12)
+- Without the firmware cap: up to 750 points × 8B ≈ 7.1 KB → exceeds budget, causes "Dropping frame" errors
 
 ### Firmware UART cap (SafeRoom modification)
 
 `mss_main.c` line ~1735 — caps UART point cloud output to `maxNumPoints` (from `trackingCfg`).  
-**Status: compiled and flashed (commit 9df12e6, 2026-04-09).** `maxNumPoints` can safely be raised to 250 now that the cap is active.
+**Status: compiled and flashed (commit 9df12e6, 2026-04-09).** `maxNumPoints` already raised to 250 in active cfg.
 
 ```c
 uint32_t uartPointCount = outputFromDSP->pointCloudOut.object_count;
@@ -270,19 +270,18 @@ python tools/radar_reader.py --cli COM4 --data COM3 --z-offset -0.20
 
 Key classes:
 - `FrameReader` — syncs to magic word, reads full frames, dispatches TLV parsers
-- `FallDetector` — three-tier detector (see below)
+- `FallDetector` — two-tier detector (see below)
 - `CsvLogger` — logs per-track data to CSV (timestamp, pos, vel, height, fall flag)
 - `RadarWindow` — PyQtGraph-based real-time 2D/3D visualizer (`--plot` for 2D, `--plot3d` adds OpenGL panel)
 
-`FallDetector` — three-tier, calibrated (commit c14419e):
-- **Tier 1 FAST**: sustained vz ≤ −1.10 m/s for 2 frames → immediate fall alert
-- **Tier 2 SLOW**: was standing (ref maxZ ≥ 1.2 m), now at floor (maxZ < 60% ref AND < 1.0 m) for 20 s
-- **Tier 3 FAINT**: floor-level (maxZ < 0.80 m) with stable height (std < 0.10 m) for 30 s
-- Crouching no longer triggers detection (tuned specifically to avoid false positives)
+`FallDetector` — two-tier, calibrated (2026-04-20):
+- **Tier 1 FAST**: sustained vz ≤ −1.15 m/s for 3 consecutive frames → immediate fall alert
+- **Tier 2 FAINT**: floor-level (maxZ < 0.80 m) with stable height (std < 0.10 m) for 30 s → faint/unconscious alert
+- Tier 2 SLOW removed: cannot distinguish slow collapse from voluntary floor-sitting in target use case
 
 Key CLI flags:
 - `--plot` / `--plot3d` — 2D PyQtGraph / add OpenGL 3D panel
-- `--sensor-height 2.05` / `--sensor-tilt 15.0` — radar geometry (match `sensorPosition` in cfg)
+- `--sensor-height 2.04` / `--sensor-tilt 10.0` — radar geometry (match `sensorPosition` in cfg)
 - `--z-offset METERS` — runtime Z correction; positive shifts up, negative shifts down
 - `--ml-log` — use enhanced `MlCsvLogger` with Kalman accel, PC stats, label column
 - `--label-mode` — daemon thread for real-time keyboard labeling (f/n/s/w keys; requires `--ml-log`)
@@ -363,3 +362,4 @@ Per-variant HTML guides are in each variant's `docs/` folder (e.g., `3d_people_t
 - **Lateral movement blind spot**: Doppler measures radial velocity only. Motion perpendicular to the beam (e.g., walking across the room) produces near-zero Doppler and is harder to track. Not fixable in config — requires physical sensor reorientation.
 - **Height values are relative**: `maxZ - minZ` from TLV 1012 reflects the vertical extent of the radar reflection cluster (~0.3–0.5 m), not the person's absolute height. Fall detection using this value works as a ratio, not an absolute threshold.
 - **`MAX_RESOLVED_OBJECTS_PER_FRAME` = 750**: Hardcoded in the SDK. Changing it requires recompilation. The firmware UART cap works around this without changing the SDK constant.
+- **Tier-2 SLOW cannot distinguish slow collapse from voluntary floor-sitting**: Both produce the same observable signal — person was standing, now at floor level for 20 s. In the target use case (elderly person at home) sitting on the floor voluntarily is not a realistic scenario and is therefore not handled. If this distinction becomes necessary, a secondary sensor (e.g. IR camera for posture) would be required.

@@ -22,6 +22,7 @@ Keyboard labels (when label_mode=True):
 
 import csv
 import math
+import os
 import sys
 import threading
 import time
@@ -232,6 +233,9 @@ class MlCsvLogger:
     """
 
     def __init__(self, path: str, session_id: str = '', label_mode: bool = False):
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self._f          = open(path, 'w', newline='')
         self._w          = csv.writer(self._f)
         self._w.writerow(ML_COLUMNS)
