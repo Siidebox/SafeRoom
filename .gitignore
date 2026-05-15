@@ -68,3 +68,7 @@ cosas_varias/
 
 # --- Allow firmware binary (the deliverable) ---
 !code/People_Tracking/3D_People_Tracking/prebuilt_binaries/*.bin
+
+# --- Hardware build outputs (regenerable from case.scad) ---
+*.stl
+*.3mf
