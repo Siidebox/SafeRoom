@@ -72,3 +72,8 @@ cosas_varias/
 # --- Hardware build outputs (regenerable from case.scad) ---
 *.stl
 *.3mf
+
+# --- ML smoke-test outputs (not committed) ---
+figures/
+logs_migrated/
+models/
