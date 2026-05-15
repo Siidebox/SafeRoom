@@ -281,7 +281,7 @@ def train_final_models(X, X_seq, y, feat_names, best_xgb_t, best_rf_t,
     xgb_model._feature_names      = feat_names
     xgb_path = 'models/fall_detector_xgb.pkl'
     joblib.dump(xgb_model, xgb_path)
-    print(f'Saved XGBoost → {xgb_path}  (threshold={best_xgb_t:.2f})')
+    print(f'Saved XGBoost -> {xgb_path}  (threshold={best_xgb_t:.2f})')  # smoke-test fix: ASCII for cp1252
 
     # Random Forest
     rf_model = RandomForestClassifier(
@@ -293,7 +293,7 @@ def train_final_models(X, X_seq, y, feat_names, best_xgb_t, best_rf_t,
     rf_model._feature_names  = feat_names
     rf_path = 'models/fall_detector_rf.pkl'
     joblib.dump(rf_model, rf_path)
-    print(f'Saved Random Forest → {rf_path}  (threshold={best_rf_t:.2f})')
+    print(f'Saved Random Forest -> {rf_path}  (threshold={best_rf_t:.2f})')  # smoke-test fix: ASCII for cp1252
 
     # LSTM
     if train_dl:
@@ -319,7 +319,7 @@ def train_final_models(X, X_seq, y, feat_names, best_xgb_t, best_rf_t,
             lstm_model.eval()
             lstm_path = 'models/fall_detector_lstm.pt'
             torch.save(lstm_model, lstm_path)
-            print(f'Saved LSTM → {lstm_path}')
+            print(f'Saved LSTM -> {lstm_path}')  # smoke-test fix: ASCII for cp1252
         except Exception as e:
             warnings.warn(f'LSTM final training failed: {e}')
 

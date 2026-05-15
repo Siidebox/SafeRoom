@@ -302,6 +302,10 @@ def load_and_extract(csv_paths, window_size: int = WINDOW_SIZE,
         [[f.get(k, 0.0) for k in feat_names] for f in all_feats],
         dtype=np.float32
     )
+    # smoke-test fix: clip non-finite + extreme values that overflow float32
+    # (legacy logs occasionally produce huge maxZ_ratio when start≈0)
+    X = np.where(np.isfinite(X), X, 0.0)
+    X = np.clip(X, -1e9, 1e9).astype(np.float32)
 
     X_seq  = np.stack(all_seqs, axis=0).astype(np.float32)   # (N, W, C)
     y      = np.array(all_labels, dtype=np.int32)
