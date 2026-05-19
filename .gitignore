@@ -77,3 +77,6 @@ cosas_varias/
 figures/
 logs_migrated/
 models/
+
+# --- Recorded sessions (data; reproducible from sensors or synth_session.py) ---
+sessions/

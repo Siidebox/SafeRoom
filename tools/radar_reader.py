@@ -263,6 +263,12 @@ class FrameReader:
         if not self._sync():
             return None
 
+        # Timestamps captured AS SOON AS the magic word is locked, before parsing.
+        # t_mono_ns is the shared clock across radar+IR for sync; t_wall is for
+        # human-readable correlation. Both flow through frame[...] to the logger.
+        t_mono_ns = time.monotonic_ns()
+        t_wall    = time.time()
+
         # Read rest of header (HEADER_SIZE - 8 bytes for magic already consumed)
         rest = self._read_bytes(HEADER_SIZE - 8)
         if len(rest) < HEADER_SIZE - 8:
@@ -297,6 +303,8 @@ class FrameReader:
             'heights':     {},
             'indices':     [],
             'presence':    0,
+            't_mono_ns':   t_mono_ns,
+            't_wall':      t_wall,
         }
 
         offset = 0

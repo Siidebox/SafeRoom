@@ -236,6 +236,27 @@ def _extract_from_df(df: pd.DataFrame, session_id: str,
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+def _resolve_inputs(paths):
+    """
+    Accept either CSV files or session directories. A path is treated as a
+    session directory when it is a directory containing radar.csv.
+
+    Returns a list of CSV paths to load.
+    """
+    out = []
+    for p in paths:
+        sp = str(p)
+        if os.path.isdir(sp):
+            candidate = os.path.join(sp, 'radar.csv')
+            if os.path.isfile(candidate):
+                out.append(candidate)
+            else:
+                warnings.warn(f'Session dir without radar.csv, skipping: {sp}')
+        else:
+            out.append(sp)
+    return out
+
+
 def load_and_extract(csv_paths, window_size: int = WINDOW_SIZE,
                      stride: int = STRIDE):
     """
@@ -244,7 +265,8 @@ def load_and_extract(csv_paths, window_size: int = WINDOW_SIZE,
     Parameters
     ----------
     csv_paths : list[str] or list[Path]
-        Paths to ML session CSV files (produced by MlCsvLogger).
+        Either CSV files (produced by MlCsvLogger) or session directories
+        (each containing a radar.csv).
     window_size : int
         Window length in frames (default 30 = 1.5 s at 20 fps).
     stride : int
@@ -260,6 +282,8 @@ def load_and_extract(csv_paths, window_size: int = WINDOW_SIZE,
     seq_names   : list[str]   — channel names for X_seq
     """
     all_feats, all_seqs, all_labels, all_groups = [], [], [], []
+
+    csv_paths = _resolve_inputs(csv_paths)
 
     for path in csv_paths:
         path = str(path)

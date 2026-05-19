@@ -189,7 +189,10 @@ class KeyboardLabeler:
 
 ML_COLUMNS = [
     # Identification
-    'timestamp', 'session_id', 'frameNum', 'presence',
+    # t_mono_ns: monotonic-clock nanoseconds captured at frame sync — the shared
+    # reference for radar↔IR alignment within a session. timestamp is wall-clock
+    # Unix time for human inspection.
+    't_mono_ns', 'timestamp', 'session_id', 'frameNum', 'presence',
     # Track kinematics
     'tid', 'x', 'y', 'z', 'vx', 'vy', 'vz',
     # Kalman accelerations + tracker metadata (already parsed by parse_tracks,
@@ -256,7 +259,8 @@ class MlCsvLogger:
         When there are no tracks, writes a single presence-only row with
         empty track fields (same convention as CsvLogger).
         """
-        ts       = time.time()
+        t_mono   = frame.get('t_mono_ns', time.monotonic_ns())
+        ts       = frame.get('t_wall', time.time())
         presence = frame['presence']
         fn       = frame['frameNum']
         points   = frame['points']
@@ -270,7 +274,7 @@ class MlCsvLogger:
 
         if not tracks:
             self._w.writerow([
-                ts, self._session_id, fn, presence,
+                t_mono, ts, self._session_id, fn, presence,
                 '', '', '', '', '', '', '',   # tid + kinematics (7)
                 '', '', '', '', '',           # ax ay az g confidence (5)
                 '', '', '', '', '',           # height_m maxZ minZ maxZ_ref peak_vz (5)
@@ -305,7 +309,7 @@ class MlCsvLogger:
             pc = compute_pc_stats(points, indices, tid)
 
             self._w.writerow([
-                ts, self._session_id, fn, presence,
+                t_mono, ts, self._session_id, fn, presence,
                 tid,
                 round(t['x'],  4), round(t['y'],  4), round(t['z'],  4),
                 round(t['vx'], 4), round(t['vy'], 4), round(t['vz'], 4),
