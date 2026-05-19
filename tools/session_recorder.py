@@ -97,6 +97,11 @@ def main():
         sys.exit(1)
 
     data_port = serial.Serial(args.data, 921600, timeout=2.0)
+    # Drop any TLV bytes the kernel queued before our config completed; the
+    # radar firmware may have been streaming from a previous session and
+    # would otherwise force the magic-word sync to scan stale data.
+    time.sleep(0.15)
+    data_port.reset_input_buffer()
     reader = FrameReader(data_port)
     logger = MlCsvLogger(radar_csv, session_id=session_id, label_mode=False)
 
