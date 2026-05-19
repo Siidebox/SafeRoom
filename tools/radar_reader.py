@@ -672,6 +672,13 @@ class RadarWindow:
         import pyqtgraph as pg
         from pyqtgraph.Qt import QtCore, QtWidgets
 
+        # PyQt5 had flat Qt.* enums (Qt.DashLine, Qt.AlignCenter); PyQt6
+        # nests them under PenStyle / AlignmentFlag. Resolve both shapes.
+        _QtEnums_pen   = getattr(QtCore.Qt, 'PenStyle',      QtCore.Qt)
+        _QtEnums_align = getattr(QtCore.Qt, 'AlignmentFlag', QtCore.Qt)
+        _Q_DASH         = _QtEnums_pen.DashLine
+        _Q_ALIGN_CENTER = _QtEnums_align.AlignCenter
+
         self._queue    = frame_queue
         self._ir_queue = ir_queue
         # ir_rotate is the number of 90° CCW rotations applied to each IR frame
@@ -738,7 +745,7 @@ class RadarWindow:
         if boundary_box is not None:
             xmin, xmax, ymin, ymax, zmin, zmax = boundary_box
             box_pen = pg.mkPen(color=(80, 80, 200), width=1.5,
-                               style=QtCore.Qt.DashLine)
+                               style=_Q_DASH)
             # Top view: X-Y rectangle
             bx_xy = np.array([xmin, xmax, xmax, xmin, xmin])
             by_xy = np.array([ymin, ymin, ymax, ymax, ymin])
@@ -763,28 +770,28 @@ class RadarWindow:
         cnt_widget.setFixedWidth(120)
         cnt_widget.setStyleSheet('background-color: #fff0f0; border-radius: 6px;')
         cnt_layout = QtWidgets.QVBoxLayout(cnt_widget)
-        cnt_layout.setAlignment(QtCore.Qt.AlignCenter)
+        cnt_layout.setAlignment(_Q_ALIGN_CENTER)
 
         lbl_title = QtWidgets.QLabel('FALLS\ndetected')
-        lbl_title.setAlignment(QtCore.Qt.AlignCenter)
+        lbl_title.setAlignment(_Q_ALIGN_CENTER)
         lbl_title.setStyleSheet('color: darkred; font-weight: bold; font-size: 11px;')
 
         self._lbl_count = QtWidgets.QLabel('0')
-        self._lbl_count.setAlignment(QtCore.Qt.AlignCenter)
+        self._lbl_count.setAlignment(_Q_ALIGN_CENTER)
         self._lbl_count.setStyleSheet(
             'color: red; font-size: 52px; font-weight: bold;')
 
         self._lbl_last = QtWidgets.QLabel('')
-        self._lbl_last.setAlignment(QtCore.Qt.AlignCenter)
+        self._lbl_last.setAlignment(_Q_ALIGN_CENTER)
         self._lbl_last.setStyleSheet('color: gray; font-size: 9px;')
 
         lbl_faint_title = QtWidgets.QLabel('FAINTS\ndetected')
-        lbl_faint_title.setAlignment(QtCore.Qt.AlignCenter)
+        lbl_faint_title.setAlignment(_Q_ALIGN_CENTER)
         lbl_faint_title.setStyleSheet(
             'color: darkorange; font-weight: bold; font-size: 11px; margin-top: 8px;')
 
         self._lbl_faint_count = QtWidgets.QLabel('0')
-        self._lbl_faint_count.setAlignment(QtCore.Qt.AlignCenter)
+        self._lbl_faint_count.setAlignment(_Q_ALIGN_CENTER)
         self._lbl_faint_count.setStyleSheet(
             'color: orange; font-size: 36px; font-weight: bold;')
 
