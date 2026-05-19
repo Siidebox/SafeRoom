@@ -82,16 +82,28 @@ class Mlx90640Capture:
     sub-pages and the driver merges them every two reads).
     """
 
-    def __init__(self, refresh_hz: int = 16):
-        self.refresh_hz = refresh_hz
-        self._mlx       = None
-        self._buf       = [0.0] * 768
-        self._frames    = []
-        self._t_mono    = []
-        self._t_wall    = []
-        self._bad       = 0
-        self._stop      = threading.Event()
-        self._thread    = None
+    def __init__(self, refresh_hz: int = 16, frame_callback=None,
+                 store_frames: bool = True):
+        """
+        refresh_hz     : MLX90640 refresh rate.
+        frame_callback : optional callable(frame_np, t_mono_ns) -> None,
+                         invoked after each successful read. Use for live
+                         streaming to a UI without keeping a backlog.
+        store_frames   : when False, frames are not appended to the internal
+                         lists (use with frame_callback for pure streaming).
+                         Defaults to True to preserve recorder behaviour.
+        """
+        self.refresh_hz     = refresh_hz
+        self._mlx           = None
+        self._buf           = [0.0] * 768
+        self._frames        = []
+        self._t_mono        = []
+        self._t_wall        = []
+        self._bad           = 0
+        self._stop          = threading.Event()
+        self._thread        = None
+        self._frame_cb      = frame_callback
+        self._store_frames  = store_frames
 
     # ── public ──
 
@@ -139,11 +151,18 @@ class Mlx90640Capture:
         while not self._stop.is_set():
             try:
                 self._mlx.getFrame(self._buf)
-                self._t_mono.append(time.monotonic_ns())
-                self._t_wall.append(time.time())
-                self._frames.append(
-                    np.array(self._buf, dtype=np.float32).reshape(24, 32)
-                )
+                t_mono = time.monotonic_ns()
+                frame  = np.array(self._buf, dtype=np.float32).reshape(24, 32)
+                if self._store_frames:
+                    self._t_mono.append(t_mono)
+                    self._t_wall.append(time.time())
+                    self._frames.append(frame)
+                if self._frame_cb is not None:
+                    try:
+                        self._frame_cb(frame, t_mono)
+                    except Exception:  # noqa: BLE001
+                        # never let UI errors kill the IR thread
+                        pass
             except (RuntimeError, ValueError):
                 self._bad += 1
 

@@ -667,11 +667,18 @@ class RadarWindow:
 
     TRAIL_LEN = 50   # positions to keep per track
 
-    def __init__(self, frame_queue, stop_event, boundary_box=None, plot3d=False):
+    def __init__(self, frame_queue, stop_event, boundary_box=None, plot3d=False,
+                 ir_queue=None, ir_rotate: int = 0):
         import pyqtgraph as pg
         from pyqtgraph.Qt import QtCore, QtWidgets
 
-        self._queue = frame_queue
+        self._queue    = frame_queue
+        self._ir_queue = ir_queue
+        # ir_rotate is the number of 90° CCW rotations applied to each IR frame
+        # before display (0/1/2/3). Use to compensate physical camera tilt.
+        self._ir_rotate = int(ir_rotate) % 4
+        self._ir_img   = None
+        self._ir_last_temp = None
         self._stop  = stop_event
         self._total_falls  = 0
         self._total_faints = 0
@@ -791,6 +798,37 @@ class RadarWindow:
 
         main_layout.addWidget(cnt_widget, stretch=1)
 
+        # ── Optional IR (MLX90640) heatmap panel ─────────────────────────
+        if self._ir_queue is not None:
+            ir_glw = pg.GraphicsLayoutWidget()
+            ir_glw.setMinimumWidth(260)
+            ir_plot = ir_glw.addPlot(row=0, col=0, title='IR (MLX90640)')
+            ir_plot.setAspectLocked(True)
+            ir_plot.hideAxis('bottom')
+            ir_plot.hideAxis('left')
+            ir_plot.invertY(True)   # match image-style top-down orientation
+
+            # Initial frame: 24×32 zeros (or rotated shape)
+            initial = np.zeros((24, 32), dtype=np.float32)
+            if self._ir_rotate:
+                initial = np.rot90(initial, k=self._ir_rotate)
+            self._ir_img = pg.ImageItem(initial)
+
+            # Inferno-like colormap (built-in lookup)
+            try:
+                cmap = pg.colormap.get('inferno', source='matplotlib')
+            except Exception:
+                cmap = pg.colormap.get('CET-L8')   # fallback bundled cmap
+            self._ir_img.setLookupTable(cmap.getLookupTable())
+            self._ir_img.setLevels((20.0, 38.0))   # auto-rescaled on first real frame
+            ir_plot.addItem(self._ir_img)
+
+            self._ir_label = ir_glw.addLabel(
+                'IR  —  waiting…',
+                row=1, col=0, color=(80, 80, 80), size='9pt',
+            )
+            main_layout.addWidget(ir_glw, stretch=3)
+
         # ── Optional 3D GL view ──────────────────────────────────────────
         if plot3d:
             try:
@@ -851,6 +889,32 @@ class RadarWindow:
             self._timer.stop()
             self._app.quit()
             return
+
+        # IR is independent from radar frame queue — pull latest if available.
+        if self._ir_queue is not None and self._ir_img is not None:
+            ir_latest = None
+            try:
+                while True:
+                    ir_latest = self._ir_queue.get_nowait()
+            except Exception:
+                pass
+            if ir_latest is not None:
+                arr, t_mono = ir_latest
+                if self._ir_rotate:
+                    arr = np.rot90(arr, k=self._ir_rotate)
+                # ImageItem expects (col, row) ordering — pass transposed view.
+                self._ir_img.setImage(arr.T, autoLevels=False)
+                # Adaptive levels: 1st / 99th percentile of this frame.
+                lo = float(np.percentile(arr, 1))
+                hi = float(np.percentile(arr, 99))
+                if hi - lo < 1.0:
+                    hi = lo + 1.0
+                self._ir_img.setLevels((lo, hi))
+                self._ir_last_temp = (lo, float(arr.max()), hi)
+                self._ir_label.setText(
+                    f'IR  min {arr.min():.1f}°C  max {arr.max():.1f}°C  '
+                    f'(rot {self._ir_rotate*90}°)'
+                )
 
         if self._queue.empty():
             return
@@ -1221,6 +1285,17 @@ def main():
     parser.add_argument('--ml-model', default=None, metavar='PATH',
                         help='Path to trained ML fall detector (.pkl or .pt). '
                              'Runs alongside rule-based detector when provided.')
+    # IR live view (MLX90640)
+    parser.add_argument('--ir', action='store_true',
+                        help='Add live MLX90640 thermal panel to the visualizer '
+                             '(requires --plot or --plot3d, and adafruit-circuitpython-mlx90640).')
+    parser.add_argument('--ir-hz', type=int, default=16,
+                        choices=[1, 2, 4, 8, 16, 32],
+                        help='MLX90640 refresh rate in Hz (default: 16)')
+    parser.add_argument('--ir-rotate', type=int, default=0,
+                        choices=[0, 90, 180, 270],
+                        help='Rotate IR frame N degrees CCW before display '
+                             '(default: 0). Use for physically tilted cameras.')
     args = parser.parse_args()
 
     import os, datetime
@@ -1286,8 +1361,44 @@ def main():
         # Qt event loop must run in the main thread.
         # Frame reader runs in a daemon background thread.
         bbox = parse_boundary_box(args.cfg)
+
+        # ── Optional IR live capture ──────────────────────────────────────
+        ir_queue = None
+        ir_cap   = None
+        ir_rot_k = 0
+        if args.ir:
+            try:
+                from ir_recorder import Mlx90640Capture
+                ir_queue = queue.Queue(maxsize=2)
+                ir_rot_k = (args.ir_rotate // 90) % 4
+
+                def _ir_push(frame_np, t_mono_ns):
+                    # Always keep only the freshest frame.
+                    try:
+                        while True:
+                            ir_queue.get_nowait()
+                    except Exception:
+                        pass
+                    try:
+                        ir_queue.put_nowait((frame_np, t_mono_ns))
+                    except Exception:
+                        pass
+
+                ir_cap = Mlx90640Capture(refresh_hz=args.ir_hz,
+                                         frame_callback=_ir_push,
+                                         store_frames=False)
+                ir_cap.start()
+                print(f'[IR] live panel active @ {args.ir_hz} Hz, '
+                      f'rotation {args.ir_rotate}°')
+            except Exception as e:  # noqa: BLE001
+                print(f'[WARN] Could not start IR capture ({e}). '
+                      'Continuing without IR panel.')
+                ir_queue = None
+                ir_cap   = None
+
         window = RadarWindow(frame_queue, stop_event, boundary_box=bbox,
-                             plot3d=args.plot3d)
+                             plot3d=args.plot3d,
+                             ir_queue=ir_queue, ir_rotate=ir_rot_k)
         window.show()
 
         reader_thread = threading.Thread(
@@ -1305,6 +1416,11 @@ def main():
             stop_event.set()
             data_ser.close()
             logger.close()
+            if ir_cap is not None:
+                try:
+                    ir_cap.stop_and_collect()
+                except Exception:
+                    pass
     else:
         try:
             _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
