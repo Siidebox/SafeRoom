@@ -80,3 +80,7 @@ models/
 
 # --- Recorded sessions (data; reproducible from sensors or synth_session.py) ---
 sessions/
+
+# --- Local-only secrets / credentials (never committed) ---
+.local/
+*.secret
