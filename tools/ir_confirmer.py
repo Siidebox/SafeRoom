@@ -213,8 +213,73 @@ def blob_bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
     return (int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max()))
 
 
-class IrConfirmer:  # noqa: D401
-    """IR confirmer placeholder. Implemented in Task 7."""
+class IrConfirmer:
+    """Reactive IR posture confirmer. Owns ring buffer + background model.
 
-    def __init__(self, *_, **__) -> None:
-        raise NotImplementedError
+    Lifecycle:
+        c = IrConfirmer(params)
+        # On every IR frame received from Mlx90640Capture:
+        c.push(frame_np, t_mono_ns)
+        # When radar fires a tier-1 fall event:
+        if not c.is_available():
+            decision = "failopen"
+        else:
+            result = c.evaluate(radar_t_mono_ns)
+    """
+
+    def __init__(self, params: Optional[IrConfirmerParams] = None) -> None:
+        self._params = params or IrConfirmerParams()
+        self._buf = IrRingBuffer(max_seconds=self._params.buffer_seconds)
+        self._bg = BackgroundModel(self._params)
+        self._calibration_start_ns: int | None = None
+        self._last_push_ns: int = 0
+        self._last_reject: str = ""
+
+    # ── public surface ──
+
+    def push(self, frame: np.ndarray, t_mono_ns: int) -> None:
+        self._buf.push(frame, t_mono_ns)
+        self._last_push_ns = int(t_mono_ns)
+        self._maybe_calibrate()
+
+    def is_calibrated(self) -> bool:
+        return self._bg.is_calibrated()
+
+    def is_available(self) -> bool:
+        """Fail-open feed. False when calibration not yet OK."""
+        return self._bg.is_calibrated()
+
+    def last_calibration_reject_reason(self) -> str:
+        return self._last_reject
+
+    # ── calibration internals ──
+
+    def _maybe_calibrate(self) -> None:
+        if self._bg.is_calibrated():
+            return
+        if self._calibration_start_ns is None:
+            self._calibration_start_ns = self._last_push_ns
+            return
+
+        elapsed_s = (self._last_push_ns - self._calibration_start_ns) / 1e9
+        if elapsed_s < self._params.calibration_seconds:
+            return
+
+        # Try to finalize. Use the latest `calibration_seconds` of frames.
+        start_ns = self._last_push_ns - int(self._params.calibration_seconds * 1e9)
+        frames, _ = self._buf.slice(start_ns, self._last_push_ns)
+        if frames.shape[0] == 0:
+            return
+
+        self._bg = BackgroundModel(self._params)
+        for f in frames:
+            self._bg.feed(f)
+        ok = self._bg.finalize()
+        if not ok:
+            self._last_reject = self._bg.last_reject_reason
+            # schedule retry: reset calibration_start so next window opens after retry_seconds
+            self._calibration_start_ns = (
+                self._last_push_ns
+                + int(self._params.calibration_retry_seconds * 1e9)
+                - int(self._params.calibration_seconds * 1e9)
+            )

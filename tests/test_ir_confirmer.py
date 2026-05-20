@@ -156,3 +156,46 @@ def test_blob_bbox_returns_inclusive_extents():
     mask[5:9, 10:14] = True
     y0, y1, x0, x1 = blob_bbox(mask)
     assert (y0, y1, x0, x1) == (5, 8, 10, 13)
+
+
+from ir_confirmer import IrConfirmer
+
+
+def test_confirmer_starts_uncalibrated():
+    c = IrConfirmer(IrConfirmerParams())
+    assert not c.is_calibrated()
+    assert not c.is_available()
+
+
+def test_confirmer_calibrates_with_clean_frames():
+    p = IrConfirmerParams(calibration_seconds=2.0)
+    c = IrConfirmer(p)
+    for i in range(20):                          # 8 fps * 2.0s = 16 frames
+        f = _frame(22.0) + np.random.normal(0, 0.05, (24, 32)).astype(np.float32)
+        c.push(f, t_mono_ns=int(i * 0.125 * 1e9))
+    # Allow finalize after 2s of frames
+    assert c.is_calibrated()
+    assert c.is_available()
+
+
+def test_confirmer_rejects_calibration_with_person_and_retries():
+    p = IrConfirmerParams(calibration_seconds=2.0,
+                          calibration_retry_seconds=1.0)
+    c = IrConfirmer(p)
+    # Phase 1: person present during first calibration window
+    for i in range(20):
+        f = _person_frame(base_temp=22.0, person_temp=34.0, size=5)
+        c.push(f, t_mono_ns=int(i * 0.125 * 1e9))
+    assert not c.is_calibrated()
+    assert "cluster" in c.last_calibration_reject_reason().lower()
+
+    # Phase 2: after retry_seconds the buffer keeps growing with empty room
+    # Frames between t=2.0s and t=3.0s (retry window) — clean
+    for i in range(20, 30):
+        f = _frame(22.0) + np.random.normal(0, 0.05, (24, 32)).astype(np.float32)
+        c.push(f, t_mono_ns=int(i * 0.125 * 1e9))
+    # Allow the retry trigger at t >= last + retry_seconds (1.0s)
+    for i in range(30, 50):
+        f = _frame(22.0) + np.random.normal(0, 0.05, (24, 32)).astype(np.float32)
+        c.push(f, t_mono_ns=int(i * 0.125 * 1e9))
+    assert c.is_calibrated()
