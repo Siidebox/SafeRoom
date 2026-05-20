@@ -30,8 +30,9 @@ a static posture ("upright vs lying on floor"). The design exploits this.
 
 - The IR does NOT autonomously trigger fall alerts (no IR-only detection in
   the decision path for v1).
-- No detailed kinetic event detection from IR ("did the body fall?"). That
-  is an experimental extension, deferred.
+- No detailed kinetic event detection from IR ("did the body fall?") in
+  v1's decision path. The kinetic exploration script that decides whether
+  to build it is part of this spec (Extensions, phase 1).
 - No replacement of the rule-based or ML radar fall detectors.
 
 ## Decisions (from grill-me session)
@@ -45,7 +46,7 @@ a static posture ("upright vs lying on floor"). The design exploits this.
 | 5 | Algorithm: rule-based with 4 features | Zero data needed to start; interpretable; LogReg upgrade planned post-dataset |
 | 6 | Fusion: confidence downgrade with fail-open | Never lose a true positive; reduce alarm fatigue when IR vetoes |
 | 7 | Calibration: 30 s auto-calibration at startup with empty-room safeguard | Adapts to ambient; no operator action; safeguard prevents calibration-with-person bug |
-| 8 | A_kinetic: deferred to post-installation exploratory study | No data to set thresholds today; trivial to add later as separate spec |
+| 8 | A_kinetic: phased — phase 1 (exploration script + decision criterion) shipped now; phase 2 detector built only if exploration shows ROC AUC ≥ 0.7 on labeled data | Avoids designing thresholds without data while still committing to the evaluation path; failure mode is itself a defensible thesis result |
 
 ## Architecture overview
 
@@ -109,13 +110,28 @@ class IrConfirmer:
 
 Internals:
 
-- **Ring buffer** of the last 10 s of IR frames (~80 frames at 8 fps).
+- **Ring buffer** of the last 10 s of IR frames. Default refresh rate
+  stays `--ir-hz 16` (≈ 8 fps effective, 80 frames in the buffer). The
+  rate is a hyperparameter; for the passive lying-down classifier 8 fps
+  is ample (the body is static by construction). The exploratory study
+  for A_kinetic (see Extensions section) will report whether 16 Hz
+  effective (`--ir-hz 32`) is needed there.
 - **Background model**, learned in the first 30 s of operation (mean and
   std per pixel). Refreshed once if `is_available` reports a drop (e.g.,
   after a 5 min outage).
-- **Empty-room safeguard**: at end of calibration window, if any pixel
-  exceeds 33 °C the calibration is rejected and `is_calibrated()` stays
-  `False`; a retry is scheduled every 60 s.
+- **Empty-room safeguard**: at end of calibration window, reject the
+  calibration if there is a *clustered* warm region inconsistent with an
+  empty room — defined as:
+    `count(pixel > mean(frame) + 5 °C) >= 5` **and**
+    `max(frame) - mean(frame) >= 8 °C`.
+  Both conditions are required so that a single warm pixel of sensor
+  noise does not abort calibration, while a person's face/hands (≥ 5 px
+  cluster at ~8 °C over ambient) trips it reliably. Absolute thresholds
+  are avoided because a hot summer day in Madrid can push ambient over
+  30 °C without anyone in the room. Hyperparameters:
+  `safeguard_cluster_size = 5`, `safeguard_cluster_dt = 5.0`,
+  `safeguard_peak_dt = 8.0`. On failure, retry is scheduled every 60 s
+  silently; status surfaces in the dashboard status bar.
 - **Rule evaluator** runs only inside `evaluate()`. Sees the window
   `[radar_t_mono - 2 s, radar_t_mono + 5 s]`. If `pre` part is missing
   (system just started), uses post only and marks `pre_available=False`.
@@ -219,25 +235,47 @@ Every fall event (regardless of fusion outcome) is appended to
 This file is the basis for the fusion comparison in the tesis:
 precision/recall of radar-only vs. radar+IR vs. radar+IR(fail-open).
 
-## Extensions documented but not built
+## Extensions (phased build)
 
-### A_kinetic (deferred)
+### A_kinetic (build the decision criterion now; the detector itself is conditional)
 
 **Hypothesis**: even at 24×32 with 8 fps effective, a fall produces a
 detectable kinetic signature (centroid vertical velocity, blob bounding
 box vertical extent collapse). If true, IR can detect falls
-independently of radar.
+independently of radar — and the project gains a computer-vision angle.
 
-**Decision criterion**: post-installation, run
-`tools/explore_ir_kinetics.py` (to be written) on labeled sessions and
-plot per-class distributions of:
-- centroid vertical velocity (px/s)
-- bbox height delta over 250 ms windows
-- pixel-wise temporal gradient magnitude
+**Phase 1 — build now (alongside the confirmer)**:
+- `tools/explore_ir_kinetics.py`: reads labeled session dirs (radar.csv +
+  thermal.npz + manifest.labels), extracts the candidate kinetic features
+  below per labeled event window, and produces per-class boxplots + ROC
+  curves into `figures/ir_kinetics/`. The script is data-ready
+  immediately (only depends on session schema, which is already shipped).
+- Candidate features (initial set, refinable):
+  - centroid vertical velocity (px/s), peak magnitude over 250 ms
+  - bbox height delta over 250 ms windows
+  - bbox aspect ratio rate of change (px/s)
+  - pixel-wise temporal gradient magnitude, frame-level peak
 
-If at least one feature shows ROC AUC ≥ 0.7 on a held-out session, draft
-a separate spec for `IrKineticDetector`. Otherwise document the negative
-result in the tesis and close the question.
+**Phase 2 — run after first labeled hardware sessions**:
+Execute `explore_ir_kinetics.py` on the data. Decision rule:
+- If at least one feature shows ROC AUC ≥ 0.7 on a held-out session →
+  draft a separate spec `2026-XX-XX-ir-kinetic-detector-design.md`,
+  go to phase 3.
+- Else → document the negative result in the tesis ("MLX90640 at 2 m
+  cannot independently detect falls; passive confirmation is the only
+  viable IR contribution") and close the question.
+
+**Phase 3 (conditional)**: implement `IrKineticDetector` as an
+*additional* signal alongside the radar primary; fusion remains as
+described in the main spec but with a third input.
+
+### LogReg upgrade for the passive classifier (post-dataset)
+
+After ≥ 30 labeled fall sessions are collected, train a logistic
+regression on the four current features (plus optionally `centroid_y_mean`,
+`bbox_height_mean`, `bbox_width_mean`) using LOSO-CV. Replace the 3-of-4
+voting if F1 improvement is statistically significant on held-out
+sessions.
 
 ### LogReg upgrade for B (post-dataset)
 
@@ -252,7 +290,8 @@ sessions.
 | Path | Action | Purpose |
 |------|--------|---------|
 | `tools/ir_confirmer.py` | **new** | `IrConfirmer`, `IrConfirmerParams`, `ConfirmerResult`, ring buffer, background model |
-| `tools/radar_reader.py` | modify | Wire up confirmer when `--ir` is active; emit new event types |
+| `tools/explore_ir_kinetics.py` | **new** | A_kinetic phase 1 — features + ROC plots from labeled sessions |
+| `tools/radar_reader.py` | modify | Wire up confirmer when `--ir` is active; emit new event types; expose `--no-confirmer` for radar-only evaluation |
 | `tools/saferoom_notifier.py` | modify | Route by event_type (CONFIRMED/FAILOPEN → notify, CANDIDATE → silent) |
 | `tools/dashboard_server.py` | modify | Accept and persist new event_type field; tag banner colors |
 | `tools/dashboard/index.html` | modify | Render the three event types distinctly |
@@ -260,13 +299,20 @@ sessions.
 | `docs/data_collection_protocol.md` | modify | Note that recording sessions should include 30 s empty-room at start |
 | `docs/labeling_protocol.md` | modify | Note that `fall` label scope can span post-fall lying period (no change to vocab) |
 
-## Open questions for implementation plan
+## Resolved questions
 
-1. Should `FALL_FAILOPEN` be visually identical to `FALL_CONFIRMED` in the
-   dashboard, or carry a small "(IR offline)" badge? (Recommendation: badge.)
-2. Calibration retry policy when the room is occupied: silent retry every
-   60 s, or notify the operator? (Recommendation: silent, status visible
-   in dashboard.)
-3. Do we add a `--no-confirmer` CLI flag for testing radar-only behavior?
-   (Recommendation: yes — important for the tesis evaluation comparing
-   "radar-only" vs "radar+IR".)
+1. **Dashboard visibility of the three event types**: during development
+   the dashboard shows them distinctly (CONFIRMED = red banner + Telegram,
+   FAILOPEN = red banner with subtle "(IR offline)" badge + Telegram,
+   CANDIDATE = orange row in the event timeline, no Telegram). This makes
+   the fusion behaviour visible while debugging. The "final
+   demo" trim (collapse FAILOPEN visuals into CONFIRMED, hide CANDIDATE)
+   is left as a config knob and will be flipped before the tesis defence
+   if Guillermo prefers a cleaner look at that point.
+2. **Calibration retry when room is occupied**: silent retry every 60 s.
+   Calibration status is exposed in the dashboard status bar
+   (`IR: calibrating…` / `IR: ready` / `IR: room not empty, retrying`).
+3. **`--no-confirmer` CLI flag**: added to `radar_reader.py`. Disables the
+   IR confirmer entirely; emits only legacy `FALL` events. Required for
+   the tesis evaluation that compares "radar-only" vs "radar+IR" head to
+   head on the same hardware sessions.
