@@ -187,6 +187,32 @@ class BackgroundModel:
         return self._calibrated
 
 
+# ─── per-frame feature primitives ───────────────────────────────────────────
+
+
+def blob_mask(frame: np.ndarray, bg_mean: np.ndarray, bg_std: np.ndarray,
+              sigma_k: float = 3.0) -> np.ndarray:
+    """Boolean mask of pixels significantly hotter than background."""
+    threshold = bg_mean + sigma_k * bg_std
+    return frame > threshold
+
+
+def blob_centroid(mask: np.ndarray) -> tuple[float, float]:
+    """Unweighted centroid (cy, cx) of True pixels. NaNs when mask is empty."""
+    ys, xs = np.nonzero(mask)
+    if ys.size == 0:
+        return (float("nan"), float("nan"))
+    return (float(ys.mean()), float(xs.mean()))
+
+
+def blob_bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
+    """Inclusive (y_min, y_max, x_min, x_max). Returns (-1,-1,-1,-1) if empty."""
+    ys, xs = np.nonzero(mask)
+    if ys.size == 0:
+        return (-1, -1, -1, -1)
+    return (int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max()))
+
+
 class IrConfirmer:  # noqa: D401
     """IR confirmer placeholder. Implemented in Task 7."""
 

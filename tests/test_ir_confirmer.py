@@ -108,3 +108,51 @@ def test_background_model_safeguard_tolerates_single_noisy_pixel():
         bg.feed(f)
     bg.finalize()
     assert bg.is_calibrated()
+
+
+from ir_confirmer import (
+    blob_mask,
+    blob_centroid,
+    blob_bbox,
+)
+
+
+def test_blob_mask_picks_pixels_above_bg_plus_sigma():
+    bg_mean = np.full((24, 32), 22.0, dtype=np.float32)
+    bg_std = np.full((24, 32), 0.1, dtype=np.float32)
+    frame = bg_mean.copy()
+    frame[10:14, 12:18] = 30.0    # 4x6 = 24 hot pixels
+    mask = blob_mask(frame, bg_mean, bg_std, sigma_k=3.0)
+    assert mask.shape == (24, 32)
+    assert mask.sum() == 24
+    # And cool pixels are off
+    assert not mask[0, 0]
+
+
+def test_blob_mask_empty_when_no_signal():
+    bg_mean = np.full((24, 32), 22.0, dtype=np.float32)
+    bg_std = np.full((24, 32), 0.5, dtype=np.float32)
+    frame = bg_mean + np.random.normal(0, 0.1, bg_mean.shape).astype(np.float32)
+    mask = blob_mask(frame, bg_mean, bg_std, sigma_k=3.0)
+    assert mask.sum() < 10
+
+
+def test_blob_centroid_returns_geometric_center_of_mask():
+    mask = np.zeros((24, 32), dtype=bool)
+    mask[10:14, 12:18] = True       # rows 10..13, cols 12..17
+    cy, cx = blob_centroid(mask)
+    assert abs(cy - 11.5) < 1e-6
+    assert abs(cx - 14.5) < 1e-6
+
+
+def test_blob_centroid_nan_when_empty():
+    mask = np.zeros((24, 32), dtype=bool)
+    cy, cx = blob_centroid(mask)
+    assert np.isnan(cy) and np.isnan(cx)
+
+
+def test_blob_bbox_returns_inclusive_extents():
+    mask = np.zeros((24, 32), dtype=bool)
+    mask[5:9, 10:14] = True
+    y0, y1, x0, x1 = blob_bbox(mask)
+    assert (y0, y1, x0, x1) == (5, 8, 10, 13)
