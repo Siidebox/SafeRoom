@@ -40,6 +40,22 @@
       .pulse-alert { animation: none; }
     }
     canvas { image-rendering: pixelated; }
+    /* ---- per-event-type row styling ---- */
+    .ev-fall-confirmed span.ev-label { color: #ef4444; font-weight: 700; }
+    .ev-fall-failopen  span.ev-label { color: #ef4444; font-weight: 700; }
+    .ev-fall-candidate span.ev-label { color: #f59e0b; font-style: italic; }
+    .ev-fall-failopen span.ev-label::after {
+      content: "IR offline";
+      background: #ffd54a;
+      color: #2c2c2c;
+      font-size: 0.75em;
+      font-style: normal;
+      font-weight: 400;
+      padding: 1px 6px;
+      margin-left: 8px;
+      border-radius: 4px;
+      vertical-align: middle;
+    }
   </style>
 </head>
 <body class="bg-ink-950 text-slate-200 min-h-screen">
@@ -136,8 +152,11 @@
         status_ok_sub: 'Presence detected',
         status_no_presence: 'No presence',
         status_no_presence_sub: 'Room appears empty',
-        status_alert_fall_fast: 'FALL DETECTED',
-        status_alert_faint: 'IMMOBILITY ALERT',
+        status_alert_fall_fast:      'FALL DETECTED',
+        status_alert_fall_confirmed: 'FALL CONFIRMED (IR)',
+        status_alert_fall_failopen:  'FALL DETECTED (IR offline)',
+        status_alert_fall_candidate: 'POSSIBLE FALL',
+        status_alert_faint:          'IMMOBILITY ALERT',
         status_alert_sub: 'Tap acknowledge once attended',
         status_unknown: 'Connecting…',
         status_waiting: 'Waiting for sensor data',
@@ -153,6 +172,9 @@
         ev_presence_lost: 'Presence lost',
         ev_no_motion: 'No motion',
         ev_fall_fast: 'Fall detected',
+        ev_fall_confirmed: 'Fall confirmed (IR)',
+        ev_fall_failopen: 'Fall detected',
+        ev_fall_candidate: 'Possible fall',
         ev_faint: 'Possible faint',
         ev_heartbeat: 'Heartbeat',
         just_now: 'just now', sec_ago: 's ago', min_ago: 'min ago', hr_ago: 'h ago',
@@ -163,8 +185,11 @@
         status_ok_sub: 'Presencia detectada',
         status_no_presence: 'Sin presencia',
         status_no_presence_sub: 'La sala parece vacía',
-        status_alert_fall_fast: 'CAÍDA DETECTADA',
-        status_alert_faint: 'ALERTA DE INMOVILIDAD',
+        status_alert_fall_fast:      'CAÍDA DETECTADA',
+        status_alert_fall_confirmed: 'CAÍDA CONFIRMADA (IR)',
+        status_alert_fall_failopen:  'CAÍDA DETECTADA (IR desconectada)',
+        status_alert_fall_candidate: 'POSIBLE CAÍDA',
+        status_alert_faint:          'ALERTA DE INMOVILIDAD',
         status_alert_sub: 'Pulsa confirmar al atender',
         status_unknown: 'Conectando…',
         status_waiting: 'Esperando datos del sensor',
@@ -180,6 +205,9 @@
         ev_presence_lost: 'Presencia perdida',
         ev_no_motion: 'Sin movimiento',
         ev_fall_fast: 'Caída detectada',
+        ev_fall_confirmed: 'Caída confirmada (IR)',
+        ev_fall_failopen: 'Caída detectada',
+        ev_fall_candidate: 'Posible caída',
         ev_faint: 'Posible desmayo',
         ev_heartbeat: 'Latido',
         just_now: 'ahora mismo', sec_ago: 's', min_ago: 'min', hr_ago: 'h',
@@ -218,12 +246,17 @@
     }
     function notifyBrowser(type, detailsText) {
       if (Notification.permission !== 'granted') return;
-      const titleKey = type === 'fall_fast' ? 'status_alert_fall_fast'
-                     : type === 'faint'     ? 'status_alert_faint'
-                     :                        `ev_${type}`;
-      new Notification(t(titleKey), {
+      const notifKey = {
+        fall_fast:      'status_alert_fall_fast',
+        fall_confirmed: 'status_alert_fall_confirmed',
+        fall_failopen:  'status_alert_fall_failopen',
+        fall_candidate: 'status_alert_fall_candidate',
+        faint:          'status_alert_faint',
+      }[type] ?? `ev_${type}`;
+      const requireAck = ['fall_fast', 'fall_confirmed', 'fall_failopen', 'faint'].includes(type);
+      new Notification(t(notifKey), {
         body: detailsText || '', icon: '/static/icon.png',
-        tag: 'saferoom', requireInteraction: type === 'fall_fast' || type === 'faint',
+        tag: 'saferoom', requireInteraction: requireAck,
       });
     }
 
@@ -252,8 +285,14 @@
 
       if (s.active_alert) {
         const a = s.active_alert;
-        const key = a.type === 'fall_fast' ? 'status_alert_fall_fast' : 'status_alert_faint';
-        title.textContent = t(key);
+        const alertLabelKey = {
+          fall_confirmed: 'status_alert_fall_confirmed',
+          fall_failopen:  'status_alert_fall_failopen',
+          fall_candidate: 'status_alert_fall_candidate',
+          fall_fast:      'status_alert_fall_fast',
+          faint:          'status_alert_faint',
+        }[a.type] ?? 'status_alert_fall_fast';
+        title.textContent = t(alertLabelKey);
         sub.textContent = t('status_alert_sub');
         dot.className = 'w-5 h-5 rounded-full bg-alert shrink-0';
         card.classList.add('pulse-alert', 'border-alert');
@@ -344,15 +383,27 @@
       }
       empty.classList.add('hidden');
       const colorOf = (type) =>
-        type === 'fall_fast' ? 'text-alert' :
-        type === 'faint'     ? 'text-warn' :
-        type === 'presence'  ? 'text-ok' :
-        type === 'no_motion' ? 'text-warn' :
-                               'text-slate-400';
+        type === 'fall_confirmed' ? 'text-alert' :
+        type === 'fall_failopen'  ? 'text-alert' :
+        type === 'fall_candidate' ? 'text-warn' :
+        type === 'fall_fast'      ? 'text-alert' :
+        type === 'faint'          ? 'text-warn' :
+        type === 'presence'       ? 'text-ok' :
+        type === 'no_motion'      ? 'text-warn' :
+                                    'text-slate-400';
+      const rowClassOf = (type) =>
+        type === 'fall_confirmed' ? 'ev-fall-confirmed' :
+        type === 'fall_failopen'  ? 'ev-fall-failopen' :
+        type === 'fall_candidate' ? 'ev-fall-candidate' :
+                                    '';
+      const evLabel = (type) => {
+        const key = 'ev_' + type;
+        return I18N[lang][key] ?? type;
+      };
       list.innerHTML = recentEvents.slice(0, 30).map(ev => `
-        <li class="py-2.5 flex items-center gap-3">
+        <li class="py-2.5 flex items-center gap-3 ${rowClassOf(ev.type)}">
           <span class="w-1.5 h-1.5 rounded-full ${colorOf(ev.type).replace('text-','bg-')}"></span>
-          <span class="text-sm ${colorOf(ev.type)} font-medium">${t('ev_' + ev.type)}</span>
+          <span class="ev-label text-sm ${colorOf(ev.type)} font-medium">${evLabel(ev.type)}</span>
           <span class="ml-auto text-xs text-slate-500 tabular-nums">${fmtTime(ev.ts)}</span>
         </li>
       `).join('');
@@ -392,7 +443,7 @@
         if (msg.state) lastState = msg.state;
         if (msg.kind === 'event' && msg.event) {
           recentEvents.unshift({ ts: msg.event.timestamp, type: msg.event.type, details: msg.event.details });
-          if (['fall_fast', 'faint'].includes(msg.event.type)) {
+          if (['fall_fast', 'fall_confirmed', 'fall_failopen', 'fall_candidate', 'faint'].includes(msg.event.type)) {
             notifyBrowser(msg.event.type, JSON.stringify(msg.event.details));
           }
         }
