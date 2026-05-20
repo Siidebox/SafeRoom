@@ -30,7 +30,9 @@ Requirements:
 import argparse
 import collections
 import csv
+import json
 import math
+import os
 import struct
 import sys
 import time
@@ -51,6 +53,12 @@ try:
     _ML_INFERENCE_AVAILABLE = True
 except ImportError:
     _ML_INFERENCE_AVAILABLE = False
+
+try:
+    from ir_confirmer import IrConfirmer, IrConfirmerParams
+    _IR_CONFIRMER_AVAILABLE = True
+except ImportError:
+    _IR_CONFIRMER_AVAILABLE = False
 
 # ── TLV type constants ──────────────────────────────────────────────────────
 TLV_COMPRESSED_POINT_CLOUD = 1020
@@ -1132,11 +1140,53 @@ class RadarWindow:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# IR-fused fall event helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _emit_fall_event(notifier, event_type: str, track: dict, t_mono_ns: int,
+                     cr, reason: str) -> None:
+    """Send the IR-fused fall decision to the dashboard AND append to
+    logs/fall_events.jsonl for offline thesis evaluation."""
+    payload = {
+        'tid': int(track.get('tid', -1)),
+        'x': float(track.get('x', 0.0)),
+        'y': float(track.get('y', 0.0)),
+        'z': float(track.get('z', 0.0)),
+        'vz': float(track.get('vz', 0.0)),
+        'reason': reason,
+    }
+    if cr is not None:
+        payload['ir_decision'] = cr.decision
+        payload['ir_confidence'] = round(cr.confidence, 3)
+        payload['ir_features'] = {k: (None if (isinstance(v, float) and (v != v))
+                                       else round(v, 4))
+                                   for k, v in cr.features.items()}
+        payload['ir_rules'] = cr.rule_passed
+        payload['ir_pre_available'] = cr.pre_available
+        payload['ir_frames_used'] = cr.frames_used
+
+    if notifier is not None:
+        notifier.event(event_type, track_id=payload['tid'], **payload)
+
+    # Append to JSONL for thesis comparison
+    os.makedirs('logs', exist_ok=True)
+    row = {
+        't_mono_ns': int(t_mono_ns),
+        't_wall': time.time(),
+        'event_type': event_type,
+        'payload': payload,
+    }
+    with open('logs/fall_events.jsonl', 'a', encoding='utf-8') as f:
+        f.write(json.dumps(row) + '\n')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Frame reading loop (runs in main thread or background thread)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
-               sensor_h, sensor_t, use_plot, ml_detector=None, z_offset=0.0):
+               sensor_h, sensor_t, use_plot, ml_detector=None, z_offset=0.0,
+               confirmer=None, no_confirmer=False, notifier=None):
     frame_count  = 0
     fall_count   = 0
     faint_count  = 0
@@ -1203,6 +1253,26 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                     fall_count += 1
                     print(f'\n*** FALL DETECTED — Track {tid} at '
                           f'({t["x"]:.2f}, {t["y"]:.2f}, {t["z"]:.2f}) m ***\n')
+                    # ── IR fusion (spec 2026-05-19) ─────────────────────
+                    if confirmer is not None and not no_confirmer:
+                        if not confirmer.is_available():
+                            decision_event = 'fall_failopen'
+                            cr = None
+                            reason = 'ir unavailable'
+                        else:
+                            cr = confirmer.evaluate(frame['t_mono_ns'])
+                            if cr.decision == 'confirmed':
+                                decision_event = 'fall_confirmed'
+                            elif cr.decision == 'failopen':
+                                decision_event = 'fall_failopen'
+                            else:
+                                decision_event = 'fall_candidate'
+                            reason = cr.reason
+                        _emit_fall_event(notifier, decision_event, t,
+                                         frame['t_mono_ns'], cr, reason)
+                    else:
+                        # No confirmer in play — keep emitting only legacy fall_fast.
+                        pass
                 if is_faint:
                     faint_tids.add(tid)
                     faint_count += 1
@@ -1296,6 +1366,9 @@ def main():
     parser.add_argument('--ir', action='store_true',
                         help='Add live MLX90640 thermal panel to the visualizer '
                              '(requires --plot or --plot3d, and adafruit-circuitpython-mlx90640).')
+    parser.add_argument('--no-confirmer', action='store_true',
+                        help='Disable the IR fall confirmer even if --ir is on. '
+                             'Used for radar-only baseline comparisons in evaluation.')
     parser.add_argument('--ir-hz', type=int, default=16,
                         choices=[1, 2, 4, 8, 16, 32],
                         help='MLX90640 refresh rate in Hz (default: 16)')
@@ -1370,24 +1443,38 @@ def main():
         bbox = parse_boundary_box(args.cfg)
 
         # ── Optional IR live capture ──────────────────────────────────────
-        ir_queue = None
-        ir_cap   = None
-        ir_rot_k = 0
+        ir_queue  = None
+        ir_cap    = None
+        ir_rot_k  = 0
+        confirmer = None
         if args.ir:
             try:
                 from ir_recorder import Mlx90640Capture
                 ir_queue = queue.Queue(maxsize=2)
                 ir_rot_k = (args.ir_rotate // 90) % 4
 
+                if (not args.no_confirmer) and _IR_CONFIRMER_AVAILABLE:
+                    confirmer = IrConfirmer(IrConfirmerParams())
+                    print('[IR] confirmer enabled — calibrating background...')
+                elif args.no_confirmer:
+                    print('[IR] confirmer DISABLED (--no-confirmer)')
+                else:
+                    print('[WARN] ir_confirmer not importable; confirmer off.')
+
                 def _ir_push(frame_np, t_mono_ns):
-                    # Always keep only the freshest frame.
+                    # Apply the same rotation we apply for display so the
+                    # confirmer reasons in image (post-rotation) coordinates.
+                    rotated = np.rot90(frame_np, k=ir_rot_k) if ir_rot_k else frame_np
+                    if confirmer is not None:
+                        confirmer.push(rotated, t_mono_ns)
+                    # Keep only the freshest frame for the live panel.
                     try:
                         while True:
                             ir_queue.get_nowait()
                     except Exception:
                         pass
                     try:
-                        ir_queue.put_nowait((frame_np, t_mono_ns))
+                        ir_queue.put_nowait((rotated, t_mono_ns))
                     except Exception:
                         pass
 
@@ -1400,8 +1487,9 @@ def main():
             except Exception as e:  # noqa: BLE001
                 print(f'[WARN] Could not start IR capture ({e}). '
                       'Continuing without IR panel.')
-                ir_queue = None
-                ir_cap   = None
+                ir_queue  = None
+                ir_cap    = None
+                confirmer = None
 
         window = RadarWindow(frame_queue, stop_event, boundary_box=bbox,
                              plot3d=args.plot3d,
@@ -1412,7 +1500,13 @@ def main():
             target=_read_loop,
             args=(reader, fall_detector, logger, frame_queue, stop_event,
                   args.sensor_height, args.sensor_tilt, True),
-            kwargs={'ml_detector': ml_detector, 'z_offset': args.z_offset},
+            kwargs={
+                'ml_detector': ml_detector,
+                'z_offset': args.z_offset,
+                'confirmer': confirmer if args.ir else None,
+                'no_confirmer': args.no_confirmer,
+                'notifier': None,
+            },
             daemon=True,
         )
         reader_thread.start()
@@ -1432,7 +1526,9 @@ def main():
         try:
             _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                        args.sensor_height, args.sensor_tilt, False,
-                       ml_detector=ml_detector, z_offset=args.z_offset)
+                       ml_detector=ml_detector, z_offset=args.z_offset,
+                       confirmer=None, no_confirmer=args.no_confirmer,
+                       notifier=None)
         finally:
             data_ser.close()
             logger.close()
