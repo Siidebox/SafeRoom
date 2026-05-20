@@ -75,7 +75,8 @@ Sesión = una grabación continua de **una sola actividad** (no mezclar clases
 en la misma sesión salvo pruebas específicas).
 
 1. **Decidir** clase, sujeto, posición, orientación.
-2. **Iniciar**:
+2. **Iniciar** (la cámara IR auto-calibra los primeros 30 s — la habitación
+   debe estar **vacía** durante ese intervalo, después puede entrar el sujeto):
    ```
    python tools/session_recorder.py \
      --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
@@ -85,6 +86,9 @@ en la misma sesión salvo pruebas específicas).
      --subject <sujeto> \
      --notes "<orientacion>,<ropa>,<hora>"
    ```
+   Espera al mensaje `[IR] calibration OK` antes de entrar a la habitación.
+   Si ves `[IR] calibration aborted — hot pixels detected`, sal de la
+   habitación y espera 60 s — el script reintenta automáticamente.
 3. **Ejecutar** la acción siguiendo los tiempos del cronograma:
    - Caídas / near_fall: empezar de pie 5 s, ejecutar, mantener tumbado 5 s.
    - Sit / lie: de pie 3 s → sentarse / tumbarse → quieto 10 s.

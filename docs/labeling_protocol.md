@@ -37,6 +37,12 @@ El cursor IR del etiquetador busca el frame térmico más cercano al
   `vz` y `az` anómalos) seguido de recuperación. Si la duda es razonable,
   preferir `walk`.
 - **Bloques largos `none`**: ok etiquetar 60 s seguidos.
+- **Coherencia con el IR confirmer**: el confirmer evalúa los 5 s
+  posteriores al evento del radar. Si la etiqueta `fall` cubre ese
+  intervalo completo (cuerpo en el suelo), el IR confirmará. Si el
+  etiquetador termina la etiqueta antes (p.ej. en el instante del
+  impacto), la métrica de fusión penalizará incorrectamente al IR.
+  **Regla**: extender `fall` durante al menos 5 s tras el impacto.
 
 ## Buenas prácticas
 
