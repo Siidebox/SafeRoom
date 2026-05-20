@@ -283,3 +283,147 @@ class IrConfirmer:
                 + int(self._params.calibration_retry_seconds * 1e9)
                 - int(self._params.calibration_seconds * 1e9)
             )
+
+    # ── evaluate ──
+
+    def evaluate(self, radar_t_mono_ns: int) -> ConfirmerResult:
+        if not self._bg.is_calibrated():
+            return ConfirmerResult(
+                decision="failopen",
+                confidence=0.0,
+                reason="background not calibrated",
+                window_t_mono_ns=(radar_t_mono_ns, radar_t_mono_ns),
+            )
+
+        p = self._params
+        pre_start  = radar_t_mono_ns - int(p.pre_window_s  * 1e9)
+        pre_end    = radar_t_mono_ns
+        post_start = radar_t_mono_ns
+        post_end   = radar_t_mono_ns + int(p.post_window_s * 1e9)
+
+        pre_frames, _ = self._buf.slice(pre_start, pre_end)
+        post_frames, post_ts = self._buf.slice(post_start, post_end)
+
+        pre_available = pre_frames.shape[0] >= 4   # need ~0.5s minimum
+
+        # Rule 0 — pre-window ghost veto
+        if pre_available:
+            pre_masks = np.stack([
+                blob_mask(f, self._bg.mean, self._bg.std, p.mask_sigma_k)
+                for f in pre_frames
+            ], axis=0)
+            pre_pixel_counts = pre_masks.reshape(pre_masks.shape[0], -1).sum(axis=1)
+            empty_frac = float(np.mean(pre_pixel_counts < p.min_blob_pixels))
+            if empty_frac >= p.pre_empty_fraction:
+                return ConfirmerResult(
+                    decision="vetoed",
+                    confidence=0.0,
+                    reason=("rule-0 ghost-track veto: pre-window empty in "
+                            f"{empty_frac:.0%} of frames"),
+                    features={"pre_empty_fraction": empty_frac},
+                    pre_available=True,
+                    frames_used=int(pre_frames.shape[0] + post_frames.shape[0]),
+                    window_t_mono_ns=(pre_start, post_end),
+                )
+
+        if post_frames.shape[0] == 0:
+            return ConfirmerResult(
+                decision="vetoed",
+                confidence=0.0,
+                reason="no post-event frames available",
+                pre_available=pre_available,
+                window_t_mono_ns=(pre_start, post_end),
+            )
+
+        # Per-frame post-window quantities
+        post_masks = np.stack([
+            blob_mask(f, self._bg.mean, self._bg.std, p.mask_sigma_k)
+            for f in post_frames
+        ], axis=0)
+        post_counts = post_masks.reshape(post_masks.shape[0], -1).sum(axis=1)
+
+        # Rule 1 — hot blob presence
+        hot_frac = float(np.mean(post_counts >= p.min_blob_pixels))
+        rule1 = hot_frac >= p.hot_blob_min_frame_fraction
+
+        # Centroids / bboxes (only for frames with valid blobs)
+        H, W = post_masks.shape[1], post_masks.shape[2]
+        floor_zone_y_min = int(H * (1.0 - p.floor_zone_ratio))   # bottom half
+
+        floor_hits = 0
+        horiz_hits = 0
+        floor_valid = 0
+        horiz_valid = 0
+        cy_list: list[float] = []
+        cx_list: list[float] = []
+        ts_for_centroids: list[int] = []
+        for k in range(post_masks.shape[0]):
+            mask_k = post_masks[k]
+            if mask_k.sum() < p.min_blob_pixels:
+                continue
+            cy, cx = blob_centroid(mask_k)
+            y0, y1, x0, x1 = blob_bbox(mask_k)
+            cy_list.append(cy)
+            cx_list.append(cx)
+            ts_for_centroids.append(int(post_ts[k]))
+            floor_valid += 1
+            if cy >= floor_zone_y_min:
+                floor_hits += 1
+            horiz_valid += 1
+            bbox_h = max(1, y1 - y0 + 1)
+            bbox_w = max(1, x1 - x0 + 1)
+            aspect = bbox_h / bbox_w
+            if aspect < p.horizontal_aspect_max:
+                horiz_hits += 1
+
+        # Rule 2 — floor zone occupancy (fraction of valid-blob frames in floor zone)
+        floor_frac = (floor_hits / floor_valid) if floor_valid else 0.0
+        rule2 = floor_frac >= p.floor_min_frame_fraction
+
+        # Rule 3 — horizontal aspect
+        horiz_frac = (horiz_hits / horiz_valid) if horiz_valid else 0.0
+        rule3 = horiz_frac >= p.horizontal_min_frame_fraction
+
+        # Rule 4 — stillness in last stillness_window_s of post
+        stillness_cutoff = radar_t_mono_ns + int(
+            (p.post_window_s - p.stillness_window_s) * 1e9)
+        last_cy = [cy for cy, ts in zip(cy_list, ts_for_centroids)
+                   if ts >= stillness_cutoff and not np.isnan(cy)]
+        last_cx = [cx for cx, ts in zip(cx_list, ts_for_centroids)
+                   if ts >= stillness_cutoff and not np.isnan(cx)]
+        if len(last_cy) >= 3:
+            centroid_std = float(
+                np.sqrt(np.var(last_cy) + np.var(last_cx))
+            )
+        else:
+            centroid_std = float("nan")
+        rule4 = (not np.isnan(centroid_std)
+                 and centroid_std <= p.stillness_max_centroid_std_px)
+
+        rules = {
+            "rule1_hot_blob": rule1,
+            "rule2_floor_zone": rule2,
+            "rule3_horizontal": rule3,
+            "rule4_stillness": rule4,
+        }
+        passed = sum(1 for v in rules.values() if v)
+        confidence = passed / 4.0
+        decision = "confirmed" if passed >= p.min_rules_passed else "vetoed"
+        reason = ("confirmed by 3-of-4 vote" if decision == "confirmed"
+                  else f"only {passed}/4 rules passed")
+
+        return ConfirmerResult(
+            decision=decision,
+            confidence=confidence,
+            features={
+                "hot_blob_fraction": hot_frac,
+                "floor_centroid_fraction": floor_frac,
+                "horizontal_fraction": horiz_frac,
+                "centroid_std_px": centroid_std,
+            },
+            rule_passed=rules,
+            frames_used=int(pre_frames.shape[0] + post_frames.shape[0]),
+            pre_available=pre_available,
+            window_t_mono_ns=(pre_start, post_end),
+            reason=reason,
+        )

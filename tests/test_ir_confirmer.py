@@ -199,3 +199,90 @@ def test_confirmer_rejects_calibration_with_person_and_retries():
         f = _frame(22.0) + np.random.normal(0, 0.05, (24, 32)).astype(np.float32)
         c.push(f, t_mono_ns=int(i * 0.125 * 1e9))
     assert c.is_calibrated()
+
+
+def _ramp_session(c: IrConfirmer, n_empty: int, *, fps: int = 8,
+                  start_idx: int = 0) -> int:
+    """Push n_empty empty frames at 8 fps; return next frame index."""
+    for i in range(start_idx, start_idx + n_empty):
+        f = _frame(22.0) + np.random.normal(0, 0.05, (24, 32)).astype(np.float32)
+        c.push(f, t_mono_ns=int(i * (1.0 / fps) * 1e9))
+    return start_idx + n_empty
+
+
+def _push_lying_person(c: IrConfirmer, n: int, *, fps: int = 8,
+                       start_idx: int) -> int:
+    """Push n frames where a horizontal blob sits in the bottom rows."""
+    for i in range(start_idx, start_idx + n):
+        f = np.full((24, 32), 22.0, dtype=np.float32)
+        # bottom strip: rows 18..21, cols 8..24 — 4 tall x 16 wide -> horizontal
+        f[18:22, 8:24] = 33.0 + np.random.normal(0, 0.1, (4, 16)).astype(np.float32)
+        c.push(f, t_mono_ns=int(i * (1.0 / fps) * 1e9))
+    return start_idx + n
+
+
+def _push_standing_person(c: IrConfirmer, n: int, *, fps: int = 8,
+                          start_idx: int) -> int:
+    """Push n frames where a vertical blob sits in the top half."""
+    for i in range(start_idx, start_idx + n):
+        f = np.full((24, 32), 22.0, dtype=np.float32)
+        # top: rows 2..14, cols 14..18 — 12 tall x 4 wide -> vertical
+        f[2:14, 14:18] = 33.0 + np.random.normal(0, 0.1, (12, 4)).astype(np.float32)
+        c.push(f, t_mono_ns=int(i * (1.0 / fps) * 1e9))
+    return start_idx + n
+
+
+def test_evaluate_confirms_when_person_is_lying_after_event():
+    p = IrConfirmerParams(calibration_seconds=2.0)
+    c = IrConfirmer(p)
+
+    next_i = _ramp_session(c, 20)               # 0..19: calibration
+    assert c.is_calibrated()
+
+    next_i = _push_standing_person(c, 16, start_idx=next_i)   # 2s standing before event
+    event_t_ns = next_i * int(1e9 / 8)                        # event at this index
+    # Add 5s post-event of lying frames
+    next_i = _push_lying_person(c, 40, start_idx=next_i)
+
+    result = c.evaluate(event_t_ns)
+    assert result.decision == "confirmed", result.reason
+    assert result.confidence >= 0.75
+
+
+def test_evaluate_vetoes_when_no_person_visible_post_event():
+    p = IrConfirmerParams(calibration_seconds=2.0)
+    c = IrConfirmer(p)
+
+    next_i = _ramp_session(c, 20)
+    # Person standing before
+    next_i = _push_standing_person(c, 16, start_idx=next_i)
+    event_t_ns = next_i * int(1e9 / 8)
+    # Post: room becomes empty (ghost track scenario)
+    next_i = _ramp_session(c, 40, start_idx=next_i)
+
+    result = c.evaluate(event_t_ns)
+    assert result.decision == "vetoed"
+
+
+def test_evaluate_rule_0_vetoes_when_pre_window_is_empty():
+    """Ghost track from a static reflection — no body before the event."""
+    p = IrConfirmerParams(calibration_seconds=2.0)
+    c = IrConfirmer(p)
+
+    next_i = _ramp_session(c, 20)
+    # Pre window: 2 s of EMPTY frames (no body visible)
+    next_i = _ramp_session(c, 16, start_idx=next_i)
+    event_t_ns = next_i * int(1e9 / 8)
+    # Post: even if a hot blob appears later, Rule 0 already vetoes
+    next_i = _push_lying_person(c, 40, start_idx=next_i)
+
+    result = c.evaluate(event_t_ns)
+    assert result.decision == "vetoed"
+    assert "pre-window" in result.reason.lower() or "ghost" in result.reason.lower()
+
+
+def test_evaluate_failopen_when_uncalibrated():
+    c = IrConfirmer(IrConfirmerParams())
+    # No frames pushed — uncalibrated
+    result = c.evaluate(int(1e9))
+    assert result.decision == "failopen"
