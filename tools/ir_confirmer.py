@@ -129,11 +129,62 @@ class IrRingBuffer:
 # Filled in by later tasks.
 
 
-class BackgroundModel:  # noqa: D401
-    """Background-model placeholder. Implemented in Task 3."""
+class BackgroundModel:
+    """Per-pixel mean+std from N frames of (assumed empty) room.
 
-    def __init__(self, *_, **__) -> None:
-        raise NotImplementedError
+    Validates emptiness at finalize() using a clustered-hot-region rule
+    that tolerates uniformly warm ambient and single noisy pixels.
+    """
+
+    def __init__(self, params: Optional[IrConfirmerParams] = None) -> None:
+        self._params = params or IrConfirmerParams()
+        self._buf: list[np.ndarray] = []
+        self.mean: np.ndarray | None = None
+        self.std: np.ndarray | None = None
+        self._calibrated = False
+        self.last_reject_reason: str = ""
+
+    def feed(self, frame: np.ndarray) -> None:
+        self._buf.append(np.asarray(frame, dtype=np.float32))
+
+    def finalize(self) -> bool:
+        """Compute mean/std, run safeguard. Return True if calibration accepted."""
+        if not self._buf:
+            self._calibrated = False
+            self.last_reject_reason = "no frames"
+            return False
+
+        stack = np.stack(self._buf, axis=0)               # (N, H, W)
+        self.mean = stack.mean(axis=0).astype(np.float32)
+        # ddof=0 to avoid NaN with N=1
+        self.std = stack.std(axis=0, ddof=0).astype(np.float32)
+
+        # Safeguard: on the latest frame check for a clustered hot region.
+        # Using the last frame is enough — if the person is moving the cluster
+        # appears somewhere; if static, all frames have it.
+        last = stack[-1]
+        frame_mean = float(last.mean())
+        peak_dt = float(last.max() - frame_mean)
+        cluster_count = int(np.sum(last > frame_mean + self._params.safeguard_cluster_dt))
+
+        if (cluster_count >= self._params.safeguard_cluster_size
+                and peak_dt >= self._params.safeguard_peak_dt):
+            self._calibrated = False
+            self.last_reject_reason = (
+                f"clustered hot region detected: {cluster_count} pixels "
+                f"> mean+{self._params.safeguard_cluster_dt:.1f}°C, "
+                f"peak Δ={peak_dt:.1f}°C"
+            )
+            return False
+
+        self._calibrated = True
+        self.last_reject_reason = ""
+        # Free per-frame buffer; keep aggregates.
+        self._buf = []
+        return True
+
+    def is_calibrated(self) -> bool:
+        return self._calibrated
 
 
 class IrConfirmer:  # noqa: D401

@@ -54,3 +54,57 @@ def test_confirmer_params_defaults():
     assert p.safeguard_cluster_size == 5
     assert p.safeguard_cluster_dt == 5.0
     assert p.safeguard_peak_dt == 8.0
+
+
+from ir_confirmer import BackgroundModel
+
+
+def _person_frame(base_temp: float = 22.0, person_temp: float = 34.0,
+                  cy: int = 12, cx: int = 16, size: int = 4) -> np.ndarray:
+    f = np.full((24, 32), base_temp, dtype=np.float32)
+    f[cy - size // 2: cy + size // 2 + 1,
+      cx - size // 2: cx + size // 2 + 1] = person_temp
+    return f
+
+
+def test_background_model_learns_uniform_room():
+    bg = BackgroundModel()
+    for _ in range(60):  # 60 empty frames
+        bg.feed(_frame(22.0) + np.random.normal(0, 0.05, (24, 32)).astype(np.float32))
+    bg.finalize()
+    assert bg.is_calibrated()
+    assert 21.5 < float(bg.mean.mean()) < 22.5
+    # std should be small (sensor noise)
+    assert float(bg.std.mean()) < 0.5
+
+
+def test_background_model_safeguard_rejects_person():
+    bg = BackgroundModel()
+    # 30 frames with a hot 5x5 person blob (max 34 over mean 22 -> dt = 12)
+    for _ in range(30):
+        bg.feed(_person_frame(base_temp=22.0, person_temp=34.0, size=5))
+    bg.finalize()
+    assert not bg.is_calibrated()
+    assert "cluster" in bg.last_reject_reason.lower() or "person" in bg.last_reject_reason.lower()
+
+
+def test_background_model_safeguard_tolerates_warm_ambient():
+    """Hot summer day: ambient 30 °C, but no clustered hotter region."""
+    bg = BackgroundModel()
+    for _ in range(60):
+        f = np.full((24, 32), 30.0, dtype=np.float32)
+        f += np.random.normal(0, 0.1, f.shape).astype(np.float32)
+        bg.feed(f)
+    bg.finalize()
+    assert bg.is_calibrated()
+
+
+def test_background_model_safeguard_tolerates_single_noisy_pixel():
+    """One isolated hot pixel (sensor glitch) should not abort calibration."""
+    bg = BackgroundModel()
+    for _ in range(60):
+        f = np.full((24, 32), 22.0, dtype=np.float32)
+        f[5, 5] = 40.0   # single very hot pixel — cluster size = 1
+        bg.feed(f)
+    bg.finalize()
+    assert bg.is_calibrated()
