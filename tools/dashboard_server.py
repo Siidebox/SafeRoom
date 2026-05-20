@@ -42,10 +42,18 @@ DB_PATH = ROOT / "dashboard.db"
 TEMPLATES_DIR = Path(__file__).parent / "dashboard"
 TG_TOKEN = os.environ.get("SAFEROOM_TG_TOKEN", "").strip()
 TG_CHAT_ID = os.environ.get("SAFEROOM_TG_CHAT_ID", "").strip()
-TG_CRITICAL_TYPES = {"fall_fast", "faint"}
+TG_CRITICAL_TYPES = {"fall_fast", "faint", "fall_confirmed", "fall_failopen"}
 SENSOR_TIMEOUT_S = 10.0
 
-EVENT_TYPES = {"presence", "presence_lost", "no_motion", "fall_fast", "faint", "heartbeat"}
+EVENT_TYPES = {
+    "presence", "presence_lost", "no_motion",
+    "fall_fast",            # legacy single-tier — kept for back-compat
+    "fall_confirmed",       # radar + IR agreed
+    "fall_failopen",        # radar fired, IR unavailable -> trust radar
+    "fall_candidate",       # radar fired, IR vetoed -> log only
+    "faint",
+    "heartbeat",
+}
 
 
 class EventIn(BaseModel):
@@ -194,13 +202,14 @@ async def post_event(ev: EventIn, request: Request):
     elif ev.type == "presence_lost" and state.presence:
         state.presence = False
         state.last_presence_change = ev.timestamp
-    if ev.type in {"fall_fast", "faint"}:
+    if ev.type in {"fall_fast", "faint", "fall_confirmed", "fall_failopen"}:
         state.active_alert = {
             "type": ev.type,
             "timestamp": ev.timestamp,
             "track_id": ev.track_id,
             "details": ev.details,
         }
+    # fall_candidate intentionally does NOT set active_alert (log only).
     if ev.type in TG_CRITICAL_TYPES:
         await telegram_send(
             f"🚨 <b>{ev.type.upper()}</b> detected at "
