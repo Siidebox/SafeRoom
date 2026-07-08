@@ -11,6 +11,7 @@ la Raspberry Pi (usuario `guillermo`) y que el repo vive en `~/SafeRoom`.
 | Etiquetar sesiones grabadas | [04-labeling.md](04-labeling.md) |
 | Entrenar y evaluar modelos | [05-train-eval.md](05-train-eval.md) |
 | Diagnóstico y mantenimiento | [06-troubleshooting.md](06-troubleshooting.md) |
+| **Día de captura del dataset (guía completa)** | [07-dia-de-captura.md](07-dia-de-captura.md) |
 
 ## Antes de cualquier prueba con radar
 

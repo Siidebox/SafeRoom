@@ -120,8 +120,7 @@ Sesión = una grabación continua de **una sola actividad** (no mezclar clases
 en la misma sesión salvo pruebas específicas).
 
 1. **Decidir** clase, sujeto, posición, orientación.
-2. **Iniciar** (la cámara IR auto-calibra los primeros 30 s — la habitación
-   debe estar **vacía** durante ese intervalo, después puede entrar el sujeto):
+2. **Iniciar**:
    ```
    python tools/session_recorder.py \
      --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
@@ -131,9 +130,19 @@ en la misma sesión salvo pruebas específicas).
      --subject <sujeto> \
      --notes "<orientacion>,<ropa>,<hora>"
    ```
-   Espera al mensaje `[IR] calibration OK` antes de entrar a la habitación.
-   Si ves `[IR] calibration aborted — hot pixels detected`, sal de la
-   habitación y espera 60 s — el script reintenta automáticamente.
+   `session_recorder.py` solo graba — **no calibra la IR** (eso lo hace el
+   `IrConfirmer` en modo live). Para el análisis offline, la calibración
+   térmica sale de una **sesión `calib` dedicada**: al inicio de cada bloque
+   de grabación (~1 h), graba 60 s con la habitación **vacía**:
+   ```
+   python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
+     --cfg ... --duration 60 --ir-hz 16 --name calib_bloqueN --subject none \
+     --notes "calibracion IR bloque N"
+   ```
+   Después, `replay_session.py --ir-calib sessions/<calib_id>` construye el
+   fondo térmico desde ella. Si alguien estuvo en la habitación durante la
+   calib, el replay la rechazará con un error claro — regrabarla. El resto
+   de sesiones NO necesitan empezar con la habitación vacía.
 3. **Ejecutar** la acción siguiendo los tiempos del cronograma:
    - Caídas: empezar de pie 5 s, ejecutar, **permanecer tumbado ≥ 8 s**
      (el `fall_lying` debe cubrir los 5 s de ventana del IR confirmer).
@@ -155,15 +164,18 @@ en la misma sesión salvo pruebas específicas).
 
 ## Cronograma sugerido (día de captura, protocolo mínimo viable)
 
+Cada bloque empieza con una **sesión `calib` de 60 s con la habitación
+vacía** (fondo térmico para `replay_session.py --ir-calib`).
+
 | Bloque | Duración | Contenido |
 |---|---|---|
 | Setup + precheck | 45 min | Montaje sensor en posición (2.04 m, 10°), cableado a la Pi, smoke test (ver checklist abajo) |
-| Bloque 1 | 1 h | 25–30 fall (4 orientaciones × ≥ 3 posiciones) |
+| Bloque 1 | 1 h | calib 60 s + 25–30 fall (4 orientaciones × ≥ 3 posiciones) |
 | Descanso | 15 min | |
-| Bloque 2 | 30–45 min | Negativos no guionizados (1ª sesión larga con confusores) |
-| Bloque 3 | 30 min | 15 near_fall + 20 sit |
+| Bloque 2 | 30–45 min | calib 60 s + negativos no guionizados (1ª sesión larga con confusores) |
+| Bloque 3 | 30 min | calib 60 s + 15 near_fall + 20 sit |
 | Bloque 4 | 30 min | 15–20 walk + 10 lie + 10 stand + 2 × none 100 s |
-| Bloque 5 | 30 min | 2ª sesión negativa + 2 escenarios continuos |
+| Bloque 5 | 30 min | calib 60 s + 2ª sesión negativa + 2 escenarios continuos |
 | Etiquetado | 1–2 h | Todas las sesiones del día (puede ser otro día) |
 
 Con un segundo sujeto (más adelante), repetir bloques 1–3 reducidos a la
@@ -173,15 +185,21 @@ mitad otro día.
 
 1. Sensor montado a **2.04 m, tilt 10°**, misma posición que `sensorPosition`
    del `.cfg` activo (esquina, tripode o soporte definitivo).
-2. MLX90640 junto al radar con FOV alineado; anotar orientación de montaje.
+2. MLX90640 junto al radar con FOV alineado; **anotar la rotación de
+   montaje** (0/90/180/270°) — debe pasarse igual en `radar_reader.py
+   --ir-rotate` (live) y en `replay_session.py --ir-rotate` (offline).
 3. Pi arrancada; radar en `/dev/ttyUSB0` (CLI) y `/dev/ttyUSB1` (datos).
 4. Smoke test: `python tools/session_recorder.py --duration 10 --name precheck`
    → verificar `radar.fps_real ≥ 19.5` y `thermal.fps_real ≥ 7.5`.
 5. Verificación visual con `radar_reader.py --plot`: caminar por la
    habitación y comprobar que el track sigue a la persona dentro del
    `boundaryBox`; comprobar maxZ ≈ altura esperada de pie.
-6. Prueba de calibración IR: habitación vacía 30 s → mensaje
-   `[IR] calibration OK`.
+6. Grabar la sesión `calib` del bloque 1 (60 s, habitación vacía) y
+   validarla en el momento:
+   ```
+   python -c "import sys; sys.path.insert(0,'tools'); from replay_session import load_background_from_session as l; l('sessions/<calib_id>'); print('calib OK')"
+   ```
+   Si alguien estaba en la habitación, dará error con el motivo — regrabar.
 7. Ensayo de 1 caída sobre colchoneta con `--plot`: confirmar que Tier-1
    dispara (o anotar si no, para revisar umbral).
 8. Colchoneta colocada; consentimiento informado del sujeto firmado

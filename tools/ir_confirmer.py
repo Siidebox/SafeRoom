@@ -227,10 +227,17 @@ class IrConfirmer:
             result = c.evaluate(radar_t_mono_ns)
     """
 
-    def __init__(self, params: Optional[IrConfirmerParams] = None) -> None:
+    def __init__(self, params: Optional[IrConfirmerParams] = None,
+                 background: Optional[BackgroundModel] = None) -> None:
+        # background: a pre-finalized BackgroundModel (e.g. built from a
+        # dedicated empty-room calibration session in offline replay).
+        # When provided and calibrated, startup auto-calibration is skipped.
         self._params = params or IrConfirmerParams()
         self._buf = IrRingBuffer(max_seconds=self._params.buffer_seconds)
-        self._bg = BackgroundModel(self._params)
+        if background is not None and background.is_calibrated():
+            self._bg = background
+        else:
+            self._bg = BackgroundModel(self._params)
         self._calibration_start_ns: int | None = None
         self._last_push_ns: int = 0
         self._last_reject: str = ""

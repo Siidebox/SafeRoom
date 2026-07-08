@@ -6,7 +6,11 @@ Sin GUI, sin confirmer — solo datos crudos para etiquetar después.
 ## Antes
 
 1. Reset físico del radar (botón RST).
-2. Habitación vacía los primeros 30 s (calibración IR).
+2. Al inicio de cada bloque (~1 h), graba una sesión `calib` de 60 s con la
+   habitación **vacía** — es el fondo térmico que usa
+   `replay_session.py --ir-calib`. Las demás sesiones no necesitan
+   habitación vacía al empezar (`session_recorder.py` solo graba, no
+   calibra).
 
 ## Sesión estándar (30 s)
 

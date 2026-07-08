@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from event_metrics import Detection, GtEvent, compute_event_metrics
 from manifest_schema import Manifest
 from radar_reader import FallDetector
-from ir_confirmer import IrConfirmer, IrConfirmerParams
+from ir_confirmer import BackgroundModel, IrConfirmer, IrConfirmerParams
 
 NS = int(1e9)
 
@@ -67,7 +67,7 @@ class Session:
     thermal_ts: Optional[np.ndarray]         # (N,) t_mono_ns or None
 
 
-def load_session(session_dir: str) -> Session:
+def load_session(session_dir: str, ir_rotate_k: int = 0) -> Session:
     radar_df = pd.read_csv(os.path.join(session_dir, 'radar.csv'))
     radar_df = radar_df.sort_values('t_mono_ns', kind='stable').reset_index(drop=True)
     manifest = Manifest.load(session_dir)
@@ -78,6 +78,12 @@ def load_session(session_dir: str) -> Session:
         npz = np.load(npz_path)
         if 'frames' in npz and len(npz['frames']):
             thermal_frames = npz['frames'].astype(np.float32)
+            if ir_rotate_k:
+                # Live pushes rot90-ed frames to the confirmer (--ir-rotate
+                # in radar_reader); recorded npz frames are raw, so replay
+                # must apply the same mounting rotation.
+                thermal_frames = np.rot90(thermal_frames, k=ir_rotate_k,
+                                          axes=(1, 2)).copy()
             thermal_ts = npz['t_mono_ns'].astype(np.int64)
             order = np.argsort(thermal_ts)
             thermal_frames, thermal_ts = thermal_frames[order], thermal_ts[order]
@@ -165,13 +171,49 @@ def replay_ml(radar_df: pd.DataFrame, model_path: str,
     return detections
 
 
+def load_background_from_session(calib_dir: str,
+                                 params: Optional[IrConfirmerParams] = None,
+                                 ir_rotate_k: int = 0) -> BackgroundModel:
+    """Build a thermal BackgroundModel from a dedicated empty-room
+    calibration session (60 s recorded at the start of each capture block).
+
+    Mirrors live behavior — the confirmer calibrates once at startup —
+    without wasting 30 s of empty room at the start of every session.
+
+    Raises ValueError when thermal data is missing or the safeguard rejects
+    the frames (someone was in the room during calibration).
+    """
+    npz_path = os.path.join(calib_dir, 'thermal.npz')
+    if not os.path.isfile(npz_path):
+        raise ValueError(f'No thermal.npz in calibration session: {calib_dir}')
+    npz = np.load(npz_path)
+    frames = npz['frames'].astype(np.float32)
+    if not len(frames):
+        raise ValueError(f'Empty thermal.npz in calibration session: {calib_dir}')
+    if ir_rotate_k:
+        frames = np.rot90(frames, k=ir_rotate_k, axes=(1, 2)).copy()
+
+    bg = BackgroundModel(params or IrConfirmerParams())
+    for f in frames:
+        bg.feed(f)
+    if not bg.finalize():
+        raise ValueError(
+            f'Calibration session rejected ({calib_dir}): '
+            f'{bg.last_reject_reason}. The room must be empty while '
+            f'recording the calib session.')
+    return bg
+
+
 def replay_ir(session: Session, detections: List[Detection],
-              params: Optional[IrConfirmerParams] = None) -> Optional[dict]:
+              params: Optional[IrConfirmerParams] = None,
+              background: Optional[BackgroundModel] = None) -> Optional[dict]:
     """Evaluate the IrConfirmer at each detection timestamp.
 
     Offline we widen the ring buffer to the whole session so evaluation can
-    happen after all frames are pushed; calibration still consumes the first
-    calibration_seconds of frames exactly as live.
+    happen after all frames are pushed. Without `background`, startup
+    auto-calibration consumes the first calibration_seconds of frames
+    exactly as live; with it (from load_background_from_session) the
+    confirmer starts calibrated.
 
     Returns {'calibrated': bool, 'results': {id(det): ConfirmerResult}} or
     None when the session has no thermal data.
@@ -183,7 +225,7 @@ def replay_ir(session: Session, detections: List[Detection],
     span_s = (int(session.thermal_ts[-1]) - int(session.thermal_ts[0])) / NS
     params.buffer_seconds = max(params.buffer_seconds, span_s + 1.0)
 
-    confirmer = IrConfirmer(params=params)
+    confirmer = IrConfirmer(params=params, background=background)
     for frame, t_ns in zip(session.thermal_frames, session.thermal_ts):
         confirmer.push(frame, int(t_ns))
 
@@ -232,8 +274,16 @@ def build_gt_events(manifest: Manifest) -> List[GtEvent]:
 def replay_session(session_dir: str, ml_model: Optional[str] = None,
                    ml_threshold: float = 0.5,
                    tol_pre_s: float = 1.0, tol_post_s: float = 2.0,
-                   ir_params: Optional[IrConfirmerParams] = None) -> dict:
-    sess = load_session(session_dir)
+                   ir_params: Optional[IrConfirmerParams] = None,
+                   ir_calib_dir: Optional[str] = None,
+                   ir_rotate: int = 0) -> dict:
+    ir_rotate_k = (ir_rotate // 90) % 4
+    sess = load_session(session_dir, ir_rotate_k=ir_rotate_k)
+
+    ir_background = None
+    if ir_calib_dir:
+        ir_background = load_background_from_session(ir_calib_dir, ir_params,
+                                                     ir_rotate_k=ir_rotate_k)
 
     duration_s = sess.manifest.duration_s
     if duration_s <= 0 and len(sess.radar_df):
@@ -259,7 +309,7 @@ def replay_session(session_dir: str, ml_model: Optional[str] = None,
     ir_summary = None
     if sess.thermal_frames is not None:
         all_dets = rules_dets + (ml_dets or [])
-        ir = replay_ir(sess, all_dets, ir_params)
+        ir = replay_ir(sess, all_dets, ir_params, background=ir_background)
         if ir is not None:
             detectors['rules+ir'] = _fused_entry(rules_dets, ir, metrics)
             if ml_dets is not None:
@@ -351,6 +401,14 @@ def main():
                     help='Match tolerance before GT event start (s)')
     ap.add_argument('--tol-post', type=float, default=2.0,
                     help='Match tolerance after GT event end (s)')
+    ap.add_argument('--ir-calib', default=None,
+                    help='Empty-room calibration session dir; builds the IR '
+                         'background from its thermal.npz instead of '
+                         'per-session auto-calibration')
+    ap.add_argument('--ir-rotate', type=int, default=0,
+                    choices=[0, 90, 180, 270],
+                    help='IR mounting rotation in degrees — must match the '
+                         '--ir-rotate used in radar_reader live mode')
     ap.add_argument('--json', default=None, help='Write results to JSON file')
     args = ap.parse_args()
 
@@ -367,7 +425,9 @@ def main():
             results.append(replay_session(d, ml_model=args.ml_model,
                                           ml_threshold=args.ml_threshold,
                                           tol_pre_s=args.tol_pre,
-                                          tol_post_s=args.tol_post))
+                                          tol_post_s=args.tol_post,
+                                          ir_calib_dir=args.ir_calib,
+                                          ir_rotate=args.ir_rotate))
         except FileNotFoundError as e:
             print(f'[skip] {d}: {e}')
 

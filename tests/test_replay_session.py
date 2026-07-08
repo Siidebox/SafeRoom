@@ -144,6 +144,151 @@ class TestGtEventMerging:
         assert events[0].t_end_mono_ns == int(110 * FRAME_S * NS)
 
 
+def _write_thermal(path, frames, t0_ns=0, fps=8.0):
+    frames = np.asarray(frames, dtype=np.float32)
+    ts = t0_ns + (np.arange(len(frames)) * (1e9 / fps)).astype(np.int64)
+    np.savez(path, frames=frames, t_mono_ns=ts,
+             timestamps=ts / 1e9, refresh_rate_hz=16, bad_frames=0)
+    return ts
+
+
+def _standing_blob(base=20.0):
+    f = np.full((24, 32), base, dtype=np.float32)
+    f[4:17, 14:18] = 30.0          # vertical blob (h=13, w=4)
+    return f
+
+
+def _floor_blob(base=20.0):
+    f = np.full((24, 32), base, dtype=np.float32)
+    f[18:22, 10:21] = 30.0         # horizontal blob in floor zone (h=4, w=11)
+    return f
+
+
+@pytest.fixture
+def calib_dir(tmp_path):
+    """60 s of empty room at ~20 C with mild noise."""
+    d = tmp_path / 'calib'
+    d.mkdir()
+    rng = np.random.default_rng(42)
+    frames = 20.0 + rng.normal(0.0, 0.05, size=(480, 24, 32))
+    _write_thermal(d / 'thermal.npz', frames)
+    return str(d)
+
+
+@pytest.fixture
+def hot_calib_dir(tmp_path):
+    """Calibration session with a person present — must be rejected."""
+    d = tmp_path / 'hot_calib'
+    d.mkdir()
+    frames = np.stack([_standing_blob()] * 480)
+    _write_thermal(d / 'thermal.npz', frames)
+    return str(d)
+
+
+@pytest.fixture
+def multimodal_session_dir(tmp_path):
+    """Radar fall at t=15 s + thermal standing->floor transition."""
+    d = tmp_path / 'target'
+    d.mkdir()
+    df = _make_radar_df(n_frames=600, fall_at=300)
+    df.to_csv(d / 'radar.csv', index=False)
+
+    thermal = np.stack([_standing_blob() if i < 121 else _floor_blob()
+                        for i in range(240)])   # 8 fps, switch at ~15.1 s
+    _write_thermal(d / 'thermal.npz', thermal)
+
+    manifest = {
+        'session_id': 'target', 'started_at_mono_ns': 0, 'duration_s': 30.0,
+        'subject': 'test', 'radar': {'rows': 600, 'frames': 600},
+        'thermal': {'frames': 240},
+        'labels': [
+            {'t_start_mono_ns': int(15.0 * NS), 't_end_mono_ns': int(17.0 * NS),
+             'label': 'fall', 'notes': ''},
+            {'t_start_mono_ns': int(17.0 * NS), 't_end_mono_ns': int(25.0 * NS),
+             'label': 'fall_lying', 'notes': ''},
+        ],
+        'schema_version': 1,
+    }
+    (d / 'manifest.json').write_text(json.dumps(manifest))
+    return str(d)
+
+
+class TestIrCalib:
+    def test_background_from_clean_calib_session(self, calib_dir):
+        from replay_session import load_background_from_session
+        bg = load_background_from_session(calib_dir)
+        assert bg.is_calibrated()
+
+    def test_background_rejects_occupied_calib_session(self, hot_calib_dir):
+        from replay_session import load_background_from_session
+        with pytest.raises(ValueError, match='hot'):
+            load_background_from_session(hot_calib_dir)
+
+    def test_confirmer_accepts_injected_background(self, calib_dir):
+        from replay_session import load_background_from_session
+        from ir_confirmer import IrConfirmer
+        bg = load_background_from_session(calib_dir)
+        c = IrConfirmer(background=bg)
+        assert c.is_calibrated()
+
+    def test_replay_with_ir_calib_reaches_confirmed(self, calib_dir,
+                                                    multimodal_session_dir):
+        result = replay_session(multimodal_session_dir,
+                                ir_calib_dir=calib_dir)
+        assert result['ir']['calibrated'] is True
+        decisions = [e['decision'] for e in result['ir']['evaluations']]
+        assert 'confirmed' in decisions
+        assert result['detectors']['rules+ir']['metrics']['event_recall'] == 1.0
+
+    def test_ir_rotate_matches_live_orientation(self, tmp_path):
+        # Camera mounted rotated 90 degrees: raw recorded frames have the
+        # scene sideways (a lying person shows as a vertical blob outside
+        # the floor zone -> rules 2 AND 3 fail -> vetoed). Live pushes
+        # rot90-ed frames to the confirmer (--ir-rotate), so replay must
+        # apply the same rotation to calib and session frames.
+        rng = np.random.default_rng(42)
+
+        calib = tmp_path / 'calib90'
+        calib.mkdir()
+        calib_frames = 20.0 + rng.normal(0.0, 0.05, size=(480, 24, 32))
+        calib_frames = np.rot90(calib_frames, k=-1, axes=(1, 2))
+        _write_thermal(calib / 'thermal.npz', calib_frames)
+
+        d = tmp_path / 'sideways'
+        d.mkdir()
+        df = _make_radar_df(n_frames=600, fall_at=300)
+        df.to_csv(d / 'radar.csv', index=False)
+        thermal = np.stack([_standing_blob() if i < 121 else _floor_blob()
+                            for i in range(240)])
+        thermal = np.rot90(thermal, k=-1, axes=(1, 2))  # as recorded sideways
+        _write_thermal(d / 'thermal.npz', thermal)
+        manifest = {
+            'session_id': 'sideways', 'started_at_mono_ns': 0,
+            'duration_s': 30.0, 'subject': 'test',
+            'radar': {'rows': 600, 'frames': 600}, 'thermal': {'frames': 240},
+            'labels': [{'t_start_mono_ns': int(15.0 * NS),
+                        't_end_mono_ns': int(17.0 * NS),
+                        'label': 'fall', 'notes': ''}],
+            'schema_version': 1,
+        }
+        (d / 'manifest.json').write_text(json.dumps(manifest))
+
+        raw = replay_session(str(d), ir_calib_dir=str(calib))
+        assert 'confirmed' not in {e['decision']
+                                   for e in raw['ir']['evaluations']}
+
+        fixed = replay_session(str(d), ir_calib_dir=str(calib), ir_rotate=90)
+        assert 'confirmed' in {e['decision']
+                               for e in fixed['ir']['evaluations']}
+
+    def test_replay_without_calib_stays_failopen(self, multimodal_session_dir):
+        # Person visible from frame 0 -> auto-calibration must reject.
+        result = replay_session(multimodal_session_dir)
+        assert result['ir']['calibrated'] is False
+        decisions = {e['decision'] for e in result['ir']['evaluations']}
+        assert decisions <= {'failopen'}
+
+
 class TestFuse:
     def test_vetoed_detections_are_suppressed(self):
         dets = [Detection(1 * NS, 'rules', 1, {'type': 'fall'}),
