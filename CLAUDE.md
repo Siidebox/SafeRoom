@@ -312,6 +312,8 @@ Full end-to-end ML pipeline for fall detection. All tools are implemented.
 | `evaluate_model.py` | Thesis figures: confusion matrices, ROC, PR curves, feature importance, latency histogram, LaTeX metrics table |
 | `label_session.py` | Post-hoc interactive labeling: drag-select time regions on plot, assign f/n/s/w labels, saves in-place |
 | `ml_inference.py` | `MlFallDetector` — per-track ring buffers, runs trained model every N frames, supports XGBoost and PyTorch |
+| `event_metrics.py` | Window→event aggregation: matches detections against manifest LabelSpans, computes event recall, false alarms/hour, detection latency |
+| `replay_session.py` | Offline replay of recorded sessions through FallDetector + MlFallDetector + IrConfirmer with injected session clock — produces the paired rules vs ML vs fusion comparison |
 
 **ML workflow:**
 ```

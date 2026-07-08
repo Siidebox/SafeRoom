@@ -48,18 +48,28 @@ Decisión (criterio del spec):
   para `IrKineticDetector` (fase 2).
 - Si no → A_kinetic se descarta con justificación cuantitativa.
 
-## Comparar radar-only vs radar+IR (para el TFM)
+## Comparar reglas vs ML vs fusión (para el TFM) — replay offline
 
-Lanza dos sesiones live con y sin el confirmer y compara los
-`logs/fall_events.jsonl`:
+La comparación se hace **offline sobre las mismas sesiones grabadas** (no con
+runs live separados, que no serían un experimento pareado). El replay pasa
+`radar.csv` + `thermal.npz` por `FallDetector`, `MlFallDetector` e
+`IrConfirmer` con reloj de sesión y agrega las detecciones contra los
+LabelSpans del `manifest.json`:
 
 ```bash
-# Radar-only
-... radar_reader.py --plot --ir --no-confirmer
-
-# Radar + IR confirmer
-... radar_reader.py --plot --ir
+cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/replay_session.py \
+    sessions/*/ --ml-model models/fall_detector_xgb.pkl --json figures/replay_results.json
 ```
 
-Analiza el JSONL con cualquier script para sacar precisión / recall por
-escenario.
+Salida por sesión y detector (`rules`, `ml`, `rules+ir`, `ml+ir`):
+
+- **recall por evento** — fracción de caídas GT con >= 1 detección
+- **FA/h** — falsas alarmas por hora de sesión
+- **lat_med** — latencia mediana de detección desde el inicio del evento
+- decisiones del IR confirmer por detección (`confirmed`/`vetoed`/`failopen`)
+
+Flags útiles: `--ml-threshold` (umbral del modelo), `--tol-pre/--tol-post`
+(tolerancias de matching detección↔evento en segundos).
+
+Nota: en sesiones donde la habitación no está vacía los primeros 30 s, el
+confirmer no calibra y reporta `failopen` (equivale a radar-only).

@@ -1,6 +1,17 @@
 # SafeRoom — Protocolo de etiquetado
 
-Versión: 1.0 (2026-05-19). Acompaña `tools/label_session_multimodal.py`.
+Versión: 1.1 (2026-07-08). Acompaña `tools/label_session_multimodal.py`.
+
+Cambios v1.1 (decisiones pre-dataset, revisión metodológica 2026-07-08):
+- Nueva etiqueta **`fall_lying`** (tecla `g`): separa el impacto (`fall`) de la
+  permanencia en el suelo. El ML entrena solo con `fall`; la métrica de fusión
+  IR usa `fall ∪ fall_lying`. Antes un mismo `fall` extendido 5 s servía a dos
+  definiciones incompatibles y chocaba con la clase `lie`.
+- Regla de ventana: una ventana es positiva solo si contiene **≥ 5 frames
+  (250 ms) de `fall`**; ventanas con menos frames de `fall` o con `fall_lying`
+  se excluyen del entrenamiento (implementado en `feature_engineering.py`).
+- Prohibido usar `fall_detected` (salida de las reglas) como etiqueta:
+  `feature_engineering.py` ahora lanza error si falta la columna `label`.
 
 ## Reloj y propagación
 
@@ -18,7 +29,8 @@ El cursor IR del etiquetador busca el frame térmico más cercano al
 
 | Etiqueta | Tecla | Cuándo aplicarla | Cuándo NO |
 |---|---|---|---|
-| `fall` | `f` | Caída involuntaria con impacto / colapso al suelo. Desde el primer frame con `vz < 0` claro hasta la última muestra antes de cualquier intento voluntario de levantarse. | Sentarse, tumbarse, agacharse rápido pero controlado. |
+| `fall` | `f` | Caída involuntaria con impacto / colapso al suelo. Desde el primer frame con `vz < 0` claro hasta ~2 s después del impacto (persona ya inmóvil en el suelo). | Sentarse, tumbarse, agacharse rápido pero controlado. La permanencia posterior en el suelo → `fall_lying`. |
+| `fall_lying` | `g` | Persona en el suelo tras una caída, desde el final de `fall` hasta el primer intento de levantarse. Debe cubrir ≥ 5 s tras el impacto (ventana del IR confirmer). | Tumbarse voluntario → `lie`. El impacto en sí → `fall`. |
 | `near_fall` | `a` | Pérdida de equilibrio visible (tropiezo, traspié) sin llegar al suelo. | Si la persona acaba en el suelo → es `fall`, no `near_fall`. |
 | `sit` | `s` | Acción de sentarse + permanencia sentado. Comprende la transición. | De pie quieto → eso es `stand`. |
 | `lie` | `l` | Persona tumbada de forma voluntaria (cama, sofá, suelo deliberado). | Persona en el suelo tras una caída → `fall` durante ese segmento. |
@@ -30,26 +42,30 @@ El cursor IR del etiquetador busca el frame térmico más cercano al
 
 - **Inicio de `fall`**: primer frame donde `vz` se vuelve claramente
   negativa (< −0.5 m/s) o donde la persona ha perdido el control vertical.
-- **Final de `fall`**: persona inmóvil en el suelo durante ≥ 2 s. A partir
-  de ahí, si sigue tumbada y no se levanta, **etiquetar el resto como `fall`**
-  hasta que se reincorpore (el modelo aprende también la persistencia post-impacto).
+- **Final de `fall`**: persona inmóvil en el suelo durante ≥ 2 s tras el
+  impacto. A partir de ahí, si sigue tumbada y no se levanta, **etiquetar el
+  resto como `fall_lying`** hasta que se reincorpore. El levantarse no se
+  incluye en ninguna de las dos.
 - **`near_fall` vs `walk`**: cuando hay un tropiezo claro (≥ 1 frame con
   `vz` y `az` anómalos) seguido de recuperación. Si la duda es razonable,
   preferir `walk`.
 - **Bloques largos `none`**: ok etiquetar 60 s seguidos.
 - **Coherencia con el IR confirmer**: el confirmer evalúa los 5 s
-  posteriores al evento del radar. Si la etiqueta `fall` cubre ese
-  intervalo completo (cuerpo en el suelo), el IR confirmará. Si el
-  etiquetador termina la etiqueta antes (p.ej. en el instante del
-  impacto), la métrica de fusión penalizará incorrectamente al IR.
-  **Regla**: extender `fall` durante al menos 5 s tras el impacto.
+  posteriores al evento del radar. La unión `fall + fall_lying` debe cubrir
+  ese intervalo completo (cuerpo en el suelo): **`fall_lying` debe durar al
+  menos hasta 5 s después del impacto**. `replay_session.py` fusiona
+  automáticamente `fall` con su `fall_lying` contiguo al construir los
+  eventos ground-truth, así una detección tardía (p. ej. Tier-2 faint
+  durante la permanencia en el suelo) cuenta como acierto y no como falsa
+  alarma.
 
 ## Buenas prácticas
 
 1. **Mirar IR antes de decidir**: en transiciones rápidas el radar puede ser
    ambiguo (cluster pequeño en el suelo = caída o ghost). La cámara IR aclara.
-2. **Etiquetar con generosidad** los segmentos de `fall`: incluir el suelo
-   posterior. No incluir el levantarse.
+2. **`fall` acotado al impacto, `fall_lying` generoso**: el impacto termina
+   ~2 s después de tocar suelo; todo el suelo posterior es `fall_lying`.
+   No incluir el levantarse en ninguna de las dos.
 3. **`unknown` queda prohibido en el dataset final**: cualquier fila que tras
    etiquetar siga como `unknown` debe convertirse a `none` o descartarse antes
    de entrenar.

@@ -115,7 +115,7 @@ class MlFallDetector:
 
     def __init__(self, model_path: str, window_size: int = 30,
                  stride: int = 5, threshold: float = 0.50,
-                 cooldown: float = 5.0):
+                 cooldown: float = 5.0, clock=None):
         if not os.path.isfile(model_path):
             raise FileNotFoundError(f'Model not found: {model_path}')
 
@@ -129,15 +129,18 @@ class MlFallDetector:
         self._last_det    = {}   # tid → timestamp of last fall detection
         self._last_prob   = {}   # tid → last predicted probability
 
+        # clock: callable returning seconds — injectable so offline replay
+        # (replay_session.py) can drive cooldowns with session time.
         import time
-        self._time = time
+        self._clock = clock if clock is not None else time.time
         print(f'[MlFallDetector] Loaded {model_path} ({self._model_type})  '
               f'window={window_size} stride={stride} threshold={threshold:.2f}')
 
     def _init_tid(self, tid: int):
         if tid not in self._buffers:
             self._buffers[tid]  = _TrackBuffer(self._window_size)
-            self._last_det[tid] = 0.0
+            # -inf = "never detected" (see FallDetector._init_tid)
+            self._last_det[tid] = float('-inf')
             self._last_prob[tid] = 0.0
 
     def update(self, tid: int, track: dict, height: dict,
@@ -184,7 +187,7 @@ class MlFallDetector:
         prob   = self._predict_proba(win_df)
         self._last_prob[tid] = prob
 
-        now = self._time.time()
+        now = self._clock()
         in_cooldown = (now - self._last_det[tid]) < self._cooldown
         is_fall = (not in_cooldown) and (prob >= self._threshold)
 

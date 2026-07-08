@@ -378,7 +378,10 @@ class FallDetector:
     FAINT_PERSIST      = 600    # frames (30 s at 20 fps)
     FAINT_COOLDOWN     = 60.0   # s between faint detections per track
 
-    def __init__(self, frame_period_s: float = 0.05):
+    def __init__(self, frame_period_s: float = 0.05, clock=None):
+        # clock: callable returning seconds — injectable so offline replay
+        # (replay_session.py) can drive cooldowns with session time.
+        self._clock        = clock if clock is not None else time.time
         self._maxz_hist    = {}   # tid → deque of (maxZ, timestamp)
         self._maxz_stab    = {}   # tid → deque of maxZ values — FAINT_WINDOW
         self._last_det     = {}   # tid → timestamp of last fall detection
@@ -393,8 +396,11 @@ class FallDetector:
         if tid not in self._maxz_hist:
             self._maxz_hist[tid]    = collections.deque()
             self._maxz_stab[tid]    = collections.deque()
-            self._last_det[tid]     = 0.0
-            self._last_faint[tid]   = 0.0
+            # -inf = "never detected": with an injected session clock that
+            # starts near 0, initializing to 0.0 would leave the cooldown
+            # active for the first COOLDOWN seconds of the session.
+            self._last_det[tid]     = float('-inf')
+            self._last_faint[tid]   = float('-inf')
             self._frame_cnt[tid]    = 0
             self._fast_count[tid]   = 0
             self._still_count[tid]  = 0
@@ -407,7 +413,7 @@ class FallDetector:
         track:  {'vz': float, ...}
         Returns (is_fall, is_faint).
         """
-        now   = time.time()
+        now   = self._clock()
         max_z = height.get('maxZ', 0.0)
         vz    = track.get('vz', 0.0)
 

@@ -3,7 +3,7 @@
 feature_engineering.py — Sliding-window feature extraction for fall detection ML.
 
 Reads ML session CSVs (produced by MlCsvLogger), applies a sliding window over
-each track's timeseries, and computes ~30 hand-crafted features per window.
+each track's timeseries, and computes 36 hand-crafted features per window.
 
 Outputs
 -------
@@ -163,18 +163,35 @@ def extract_features_from_window(win: pd.DataFrame) -> dict:
     return feat
 
 
-def _window_label(win: pd.DataFrame) -> int:
+def _window_label(win: pd.DataFrame, min_fall_frames: int = 5):
     """
-    Assign a binary label to a window.
-    Returns 1 if any row is labeled 'fall', else 0.
+    Assign a binary label to a window (M3/M4 decisions, 2026-07-08).
 
-    Falls back to 'fall_detected' column if 'label' column is absent
-    (old CSVs with rule-based labels only — not ground truth).
+    Returns:
+        1    — >= min_fall_frames rows labeled 'fall' (5 frames = 250 ms
+               at 20 fps; any-overlap labeling made a window with 1/30 fall
+               frames as positive as one centered on the impact).
+        None — window touches 'fall' (below threshold) or 'fall_lying'
+               (post-impact lying, kept for the IR fusion metric only):
+               excluded from training, neither noisy positive nor
+               contradictory negative vs the 'lie' class.
+        0    — otherwise.
+
+    The rule-based 'fall_detected' column is NOT an acceptable fallback:
+    training on the baseline's own output is baseline->ML label leakage.
     """
     if 'label' in win.columns:
-        return 1 if (win['label'] == FALL_LABEL).any() else 0
-    elif 'fall_detected' in win.columns:
-        return 1 if (win['fall_detected'] == 1).any() else 0
+        n_fall = int((win['label'] == FALL_LABEL).sum())
+        if n_fall >= min_fall_frames:
+            return 1
+        if n_fall > 0 or (win['label'] == 'fall_lying').any():
+            return None
+        return 0
+    if 'fall_detected' in win.columns:
+        raise ValueError(
+            "No 'label' column — refusing to fall back to the rule-based "
+            "'fall_detected' column as ground truth (label leakage). "
+            "Label the session first (label_session_multimodal.py).")
     return 0
 
 
@@ -213,6 +230,10 @@ def _extract_from_df(df: pd.DataFrame, session_id: str,
         for start in range(0, n - window_size + 1, stride):
             win = track_df.iloc[start: start + window_size]
 
+            label = _window_label(win)
+            if label is None:       # ambiguous boundary / fall_lying window
+                continue
+
             feat_dict = extract_features_from_window(win)
             feats.append(feat_dict)
 
@@ -228,7 +249,7 @@ def _extract_from_df(df: pd.DataFrame, session_id: str,
             seq_arr = np.where(np.isfinite(seq_arr), seq_arr, 0.0)
             seqs.append(seq_arr)
 
-            labels.append(_window_label(win))
+            labels.append(label)
             groups.append(session_id)
 
     return feats, seqs, labels, groups

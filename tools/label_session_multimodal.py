@@ -15,6 +15,7 @@ Interactions:
     Drag on ax1 or ax2 to select a time range.
     Then press one of:
         f  fall
+        g  fall_lying (post-impact lying, until getting up)
         a  near_fall
         s  sit
         l  lie
@@ -52,8 +53,9 @@ from manifest_schema import Manifest, LabelSpan    # noqa: E402
 
 
 LABEL_COLORS = {
-    'fall':      '#e74c3c',
-    'near_fall': '#e67e22',
+    'fall':       '#e74c3c',
+    'fall_lying': '#c0392b',
+    'near_fall':  '#e67e22',
     'sit':       '#f39c12',
     'lie':       '#9b59b6',
     'walk':      '#3498db',
@@ -64,6 +66,7 @@ LABEL_COLORS = {
 
 KEY_TO_LABEL = {
     'f': 'fall',
+    'g': 'fall_lying',
     'a': 'near_fall',
     's': 'sit',
     'l': 'lie',
@@ -151,7 +154,7 @@ class MultimodalLabeler:
 
         fig.suptitle(
             f'{self._dir} — drag to select, then press: '
-            'f=fall  a=near_fall  s=sit  l=lie  w=walk  t=stand  n=none  '
+            'f=fall  g=fall_lying  a=near_fall  s=sit  l=lie  w=walk  t=stand  n=none  '
             '|  z=undo  Enter=save  Esc=quit',
             fontsize=9,
         )
