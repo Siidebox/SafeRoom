@@ -84,3 +84,6 @@ sessions/
 # --- Local-only secrets / credentials (never committed) ---
 .local/
 *.secret
+
+# --- Semester deliverable folders (PDF/PPTX binaries, delivered separately) ---
+2026-06-9/
