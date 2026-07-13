@@ -32,7 +32,7 @@ ls /dev/ttyUSB*          # deben aparecer /dev/ttyUSB0 (CLI) y /dev/ttyUSB1 (dat
    desplazado **1.30 m desde la esquina** (no centrado) — lado estrecho
    (1.30 m) a la izquierda del radar, lado ancho (2.40 m) a la derecha. El
    `boundaryBox` del `.cfg` ya refleja esta asimetría en X (−1.30 / +2.40).
-2. MLX90640 junto al radar, FOV alineado. Montaje actual: **90°**, que ya es
+2. MLX90640 junto al radar, FOV alineado. Montaje actual: **270°**, que ya es
    el valor por defecto de `--ir-rotate` en live y en replay (se puede omitir
    el flag). Si cambias el montaje físico, **anota la nueva rotación**
    (0/90/180/270°) y pásala explícitamente con `--ir-rotate` en ambos
@@ -211,7 +211,7 @@ replay offline pareado sobre las mismas sesiones, con métricas de evento
 (recall/evento, falsas alarmas/hora, latencia):
 
 ```powershell
-python tools\replay_session.py sessions\<sujeto>_* --ml-model models\fall_detector_xgb.pkl --ir-calib sessions\<calib_b1_id> --ir-rotate 90 --json figures\replay_results.json
+python tools\replay_session.py sessions\<sujeto>_* --ml-model models\fall_detector_xgb.pkl --ir-calib sessions\<calib_b1_id> --ir-rotate 270 --json figures\replay_results.json
 ```
 
 Usa la calib del bloque correspondiente a cada tanda si las condiciones
