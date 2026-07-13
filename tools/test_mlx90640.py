@@ -12,6 +12,7 @@ Window controls:
     a         toggle frame averaging on/off (5-frame rolling mean)
     f         toggle fixed colour scale (auto-percentile <-> fixed 18-32 °C)
     m         toggle min/max markers
+    w         cycle rotation (0 / 90 / 180 / 270°, default 90 matches mount)
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ REFRESH_RATES = {
 CMAPS         = ["inferno", "magma", "plasma", "hot", "turbo", "coolwarm"]
 INTERPS       = ["bilinear", "bicubic", "nearest"]
 START_HZ      = 16    # SafeRoom default — best SNR/fps tradeoff for fall detection
+START_ROT_K   = 1     # 90° CCW rotations to apply — matches physical mount (90°)
 AVG_WINDOW    = 5
 FPS_WINDOW_S  = 2.0
 T_MIN_VALID   = -20.0
@@ -67,6 +69,7 @@ def main() -> None:
         "frame_times": deque(),
         "buffer": deque(maxlen=AVG_WINDOW),
         "last_clean": None,
+        "rot_k": START_ROT_K,
     }
     mlx.refresh_rate = REFRESH_RATES[state["hz"]]
     print(f"  Refresh rate: {state['hz']} Hz")
@@ -75,6 +78,8 @@ def main() -> None:
     fig.canvas.manager.set_window_title("SafeRoom MLX90640 viewer")
 
     frame_buf = np.full((24, 32), np.nan, dtype=np.float32)
+    if state["rot_k"]:
+        frame_buf = np.rot90(frame_buf, k=state["rot_k"])
     img = ax.imshow(frame_buf, cmap=CMAPS[0], interpolation=INTERPS[0],
                     vmin=FIXED_LO, vmax=FIXED_HI, aspect="auto")
     fig.colorbar(img, ax=ax, label="°C")
@@ -99,6 +104,8 @@ def main() -> None:
             return img, title, min_marker, max_marker
 
         frame = np.fliplr(raw.reshape(24, 32).copy())
+        if state["rot_k"]:
+            frame = np.rot90(frame, k=state["rot_k"])
         invalid = (frame < T_MIN_VALID) | (frame > T_MAX_VALID)
         bad_pct = 100.0 * invalid.sum() / invalid.size
         frame_clean = np.where(invalid, np.nan, frame)
@@ -124,6 +131,10 @@ def main() -> None:
 
         img.set_data(frame_clean)
         img.set_clim(lo, hi)
+        h, w = frame_clean.shape
+        img.set_extent((-0.5, w - 0.5, h - 0.5, -0.5))
+        ax.set_xlim(-0.5, w - 0.5)
+        ax.set_ylim(h - 0.5, -0.5)
 
         if state["show_markers"]:
             valid = ~np.isnan(frame_clean)
@@ -149,6 +160,7 @@ def main() -> None:
                 ("FIX " if state["fixed_scale"] else "AUTO")
         title.set_text(
             f"{state['hz']} Hz | {fps:4.1f} fps | valid {100-bad_pct:3.0f}% | "
+            f"rot {state['rot_k']*90}° | "
             f"{flags} | {INTERPS[state['interp_idx']]} | {CMAPS[state['cmap_idx']]} | "
             f"p5={lo:.1f}  p95={hi:.1f}  mean={np.nanmean(frame_clean):.1f} °C"
         )
@@ -188,6 +200,9 @@ def main() -> None:
         elif k == "f":
             state["fixed_scale"] = not state["fixed_scale"]
             print(f"fixed_scale -> {state['fixed_scale']}")
+        elif k == "w":
+            state["rot_k"] = (state["rot_k"] + 1) % 4
+            print(f"rotation -> {state['rot_k']*90}°")
         elif k == "m":
             state["show_markers"] = not state["show_markers"]
             print(f"show_markers -> {state['show_markers']}")

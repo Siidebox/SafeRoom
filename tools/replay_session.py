@@ -405,10 +405,11 @@ def main():
                     help='Empty-room calibration session dir; builds the IR '
                          'background from its thermal.npz instead of '
                          'per-session auto-calibration')
-    ap.add_argument('--ir-rotate', type=int, default=0,
+    ap.add_argument('--ir-rotate', type=int, default=90,
                     choices=[0, 90, 180, 270],
-                    help='IR mounting rotation in degrees — must match the '
-                         '--ir-rotate used in radar_reader live mode')
+                    help='IR mounting rotation in degrees (default: 90, '
+                         'matches current mount) — must match the --ir-rotate '
+                         'used in radar_reader live mode')
     ap.add_argument('--json', default=None, help='Write results to JSON file')
     args = ap.parse_args()
 
