@@ -81,7 +81,7 @@ Two tiers run in parallel on each tracked target:
 | **FAST** | `vz ≤ −1.15 m/s` for 3 consecutive frames | 150 ms | Catch the impact phase of a real fall |
 | **FAINT** | `maxZ < 0.80 m` and height std `< 0.10 m` | 30 s sustained | Person on the floor and not moving — unconscious / unable to get up |
 
-Both thresholds were tuned from labelled hardware sessions in the deployment room (4.5 × 2.5 m, sensor at 2.04 m, tilt 10°).
+Both thresholds were tuned from labelled hardware sessions in the deployment room (5.10 × 3.7 m, sensor at 2.04 m, tilt 10°, offset 1.30 m from a short-wall corner).
 
 A trained ML classifier (`MlFallDetector`) can run alongside the rule-based detector to compare predictions and reduce false positives.
 

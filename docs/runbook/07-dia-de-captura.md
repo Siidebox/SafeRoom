@@ -28,7 +28,10 @@ ls /dev/ttyUSB*          # deben aparecer /dev/ttyUSB0 (CLI) y /dev/ttyUSB1 (dat
 ## Fase 1 — Montaje físico (30–45 min)
 
 1. Sensor a **2.04 m de altura, tilt 10° hacia abajo**, misma posición que
-   `sensorPosition` en `SafeRoom_1p9m_4x6m.cfg` (esquina de la habitación).
+   `sensorPosition` en `SafeRoom_1p9m_4x6m.cfg`: en la pared corta (3.7 m),
+   desplazado **1.30 m desde la esquina** (no centrado) — lado estrecho
+   (1.30 m) a la izquierda del radar, lado ancho (2.40 m) a la derecha. El
+   `boundaryBox` del `.cfg` ya refleja esta asimetría en X (−1.30 / +2.40).
 2. MLX90640 junto al radar, FOV alineado. **Anota la rotación de montaje**
    (0/90/180/270°): ese mismo valor va en `--ir-rotate` tanto en live como
    en el replay offline. Si puedes, monta a 0° y olvídate.
@@ -61,6 +64,13 @@ Camina por la habitación: el track debe seguirte dentro del `boundaryBox` y
 `maxZ` debe ser plausible de pie (~1.2–1.7 relativo). Cruza también
 perpendicular al radar y anota si el track se pierde (limitación Doppler
 conocida — documentar, no bloquea).
+
+**Comprobación específica de la asimetría en X (habitación nueva):** ve hasta
+la pared del lado ancho y confirma que el track llega hasta X ≈ +2.40 sin
+recortarse; ve hasta la pared del lado estrecho y confirma X ≈ −1.30. Si el
+track se recorta antes de llegar a la pared o el signo sale invertido (el
+lado ancho aparece en −X), el `boundaryBox` tiene el signo de X equivocado —
+corrígelo en el `.cfg` y reenvía la configuración antes de seguir.
 
 **2.3 Ensayo de caída (1 vez, sobre colchoneta):** con el mismo comando
 anterior corriendo, simula una caída. Debe aparecer la alerta Tier-1

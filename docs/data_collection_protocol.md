@@ -61,7 +61,7 @@ ground-truth visual y como baseline secundaria.
 |---|---|---|
 | Altura sensor | 2.04 m | Coincide con `sensorPosition` del `.cfg` activo |
 | Tilt | 10° hacia abajo | Validado el 2026-04-20 |
-| Habitación | ~4.5 × 2.5 m | `boundaryBox` del `.cfg` |
+| Habitación | 5.10 × 3.7 m | `boundaryBox` del `.cfg` (X asimétrico: sensor a 1.30 m de la esquina) |
 | Suelo | Limpio, sin clutter > 0.5 m | Evita reflectores estáticos |
 | MLX90640 | Junto al radar, FOV alineado | Confirmar 16 Hz refresh |
 | Iluminación | Indiferente (IR) | Para vídeo de referencia conviene luz natural |

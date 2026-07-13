@@ -189,8 +189,8 @@ Config files are named by board variant and range: e.g., `ISK_6m_default.cfg`, `
 | `maxAcceleration` Z | 10.0 m/s² | Required to track free-fall (~9.8 m/s²) |
 | `staticRACfarCfg` thresholds | 8.0 / 15.0 | Prevent static clutter from flooding UART |
 | `allocationParam` pointsThre | 20 | Fallen person generates fewer points |
-| `boundaryBox` | -1.25 1.25 0.3 4.2 0.0 2.2 | Matches 4.5m×2.5m room |
-| `sensorPosition` | height=2.04m, azimuth=0, tilt=10° | Re-measured 2026-04-20 (was 2.05m/15° on 2026-04-10), tripod in corner |
+| `boundaryBox` | -1.30 2.40 0.3 4.8 0.0 2.2 | Matches 5.10m×3.7m room (Spain house), sensor offset 1.30m from corner → asymmetric X |
+| `sensorPosition` | height=2.04m, azimuth=0, tilt=10° | Re-measured 2026-04-20 (was 2.05m/15° on 2026-04-10); room re-measured 5.10×3.7 on 2026-07-13, support case on short wall 1.30m from corner |
 
 Comments at the top of `SafeRoom_1p9m_4x6m.cfg` document every change from the `AOP_6m_default.cfg` baseline.
 
