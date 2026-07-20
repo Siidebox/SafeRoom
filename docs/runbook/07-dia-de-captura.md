@@ -16,6 +16,7 @@ viable). Criterios de etiquetado: `docs/labeling_protocol.md` (v1.1).
 ssh guillermo@piSafeRoom.local
 cd ~/SafeRoom && git pull
 ls /dev/ttyUSB*          # deben aparecer /dev/ttyUSB0 (CLI) y /dev/ttyUSB1 (datos)
+df -h ~/SafeRoom         # comprueba espacio libre: un día (~3.5 h con IR) ocupa varios GB
 ```
 
 - Pulsa el botón **RST** del IWR6843AOPEVM (siempre antes de empezar).
@@ -62,6 +63,9 @@ Si falla → runbook `06-troubleshooting.md`.
 ```bash
 ~/SafeRoom/.venv/bin/python tools/radar_reader.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --plot --sensor-height 2.04 --sensor-tilt 10.0
 ```
+
+> No omitas `--sensor-height 2.04 --sensor-tilt 10.0`: los defaults del script
+> (`2.05` / `15.0`) están desfasados respecto a la geometría real de la sala.
 
 Camina por la habitación: el track debe seguirte dentro del `boundaryBox` y
 `maxZ` debe ser plausible de pie (~1.2–1.7 relativo). Cruza también
@@ -190,9 +194,13 @@ Debe extraer ≥ 1 ventana `fall` por sesión de caída.
 
 ## Fase 7 — Entrenar y evaluar (en el PC, ~1 h)
 
-**7.1 Entrenar** (excluye las calib con nombres explícitos o un glob que no las incluya):
+**7.1 Entrenar.** Primero saca las sesiones `calib_bN` fuera de `sessions\`
+(solo son fondo térmico; entrenar con ellas mete un grupo LOSO de puro `none`).
+Los directorios se llaman `<timestamp>_calib_bN`, así que muévelos por sufijo:
 
 ```powershell
+mkdir sessions_calib
+move sessions\*_calib_* sessions_calib\
 python tools\train_model.py --data sessions\*\ --no-dl
 ```
 
@@ -211,8 +219,12 @@ replay offline pareado sobre las mismas sesiones, con métricas de evento
 (recall/evento, falsas alarmas/hora, latencia):
 
 ```powershell
-python tools\replay_session.py sessions\<sujeto>_* --ml-model models\fall_detector_xgb.pkl --ir-calib sessions\<calib_b1_id> --ir-rotate 270 --json figures\replay_results.json
+python tools\replay_session.py sessions\*_<sujeto>_* --ml-model models\fall_detector_xgb.pkl --ir-calib sessions\<calib_b1_id> --ir-rotate 270 --json figures\replay_results.json
 ```
+
+> El glob es `sessions\*_<sujeto>_*` (no `sessions\<sujeto>_*`): los directorios
+> empiezan por el timestamp (`<YYYYMMDD_HHMMSS>_<sujeto>_...`), así que el sujeto
+> va en medio. Usa `sessions\*` para replay sobre todas las sesiones.
 
 Usa la calib del bloque correspondiente a cada tanda si las condiciones
 térmicas cambiaron (sol, calefacción). Revisa en la salida las decisiones
@@ -232,6 +244,8 @@ python tools\explore_ir_kinetics.py sessions\ --out figures\ir_kinetics
 | No aparecen `/dev/ttyUSB*` | Recablear USB, `dmesg | tail`, RST |
 | `Dropping frame` / fps bajos | RST del radar y repetir sesión |
 | IR init failed | Revisar I2C (`i2cdetect -y 1` → 0x33), conexiones MLX |
+| `No module named 'board'` / `adafruit_mlx90640` | Venv incorrecto (usa `~/SafeRoom/.venv`) o falta la lib; revisar I2C (`i2cdetect -y 1` → 0x33) |
+| Disco lleno a mitad de día | `df -h`; borrar prechecks y sesiones fallidas (`rm -r sessions/<id>`) |
 | calib rechazada | Había alguien/fuente de calor; regrabar con habitación vacía |
 | Track no aparece en `--plot` | Revisar cfg enviado, boundaryBox, RST |
 | Más casos | `docs/runbook/06-troubleshooting.md` |
