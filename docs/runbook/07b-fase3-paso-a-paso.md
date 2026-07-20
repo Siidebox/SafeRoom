@@ -44,9 +44,9 @@ Si no se cumple → **RST del radar y repite esa sesión**.
 **B) Validar una calib.** Después de grabar la calib, el recorder imprime su
 carpeta: `[REC] Session: sessions/<timestamp>_calib_bN`. Copia ese id y pégalo
 en este comando (sustituye `<PEGA_AQUI_EL_ID_DE_LA_CALIB>`):
-
+/home/guillermo/SafeRoom/sessions/20260720_104243_calib_b1
 ```bash
-~/SafeRoom/.venv/bin/python -c "import sys; sys.path.insert(0,'tools'); from replay_session import load_background_from_session as l; l('sessions/<PEGA_AQUI_EL_ID_DE_LA_CALIB>'); print('calib OK')"
+~/SafeRoom/.venv/bin/python -c "import sys; sys.path.insert(0,'tools'); from replay_session import load_background_from_session as l; l('sessions/20260720_104243_calib_b1'); print('calib OK')"
 ```
 
 - Imprime `calib OK` → la calib es válida.
@@ -82,8 +82,15 @@ Antes de cada repetición, **edita dos cosas** (quita los paréntesis):
 - la orientación en `--notes` → `(frontal)` / `(lat-izq)` / `(lat-dcha)` / `(atras)`
 
 ```bash
-~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 30 --ir-hz 16 --name ${SUJ}_fall_(centro) --subject $SUJ --notes "(frontal)"
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 30 --ir-hz 16 --name ${SUJ}_fall_(centro) --subject $SUJ --notes "(frontal)" --live-fall
 ```
+1. ~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 30 --ir-hz 16 --name ${SUJ}_fall_centro --subject $SUJ --notes "frontal"
+
+> `--live-fall` (opcional, informativo): corre el detector Tier-1 **en el mismo
+> proceso** e imprime en el terminal `>> CAIDA Tier-1 ...` cuando detecta la
+> caída (vz ≤ −1.15 m/s). No abre ventana y apenas afecta a los fps. Te sirve
+> para ver si la caída "registra"; **las etiquetas siguen siendo post-hoc**, así
+> que detecte o no, la sesión vale igual. Quítalo si prefieres salida limpia.
 
 **Tras cada sesión:** mira los fps (método **A**). Si una caída sale rara (te
 frenas, media caída), repítela.

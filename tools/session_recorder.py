@@ -33,7 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from radar_reader import FrameReader              # noqa: E402
+from radar_reader import FrameReader, FallDetector  # noqa: E402
 from ml_logger import MlCsvLogger                  # noqa: E402
 from manifest_schema import (                      # noqa: E402
     Manifest, RadarMeta, ThermalMeta, SyncMeta, make_session_dir,
@@ -43,21 +43,74 @@ from send_config import send_config                # noqa: E402
 
 # ── radar read loop ─────────────────────────────────────────────────────────
 
+def _detect_frame(frame: dict, fall_detector: FallDetector,
+                  t0_mono: int) -> tuple:
+    """Run the two-tier fall detector on one frame (same veto logic as
+    radar_reader._read_loop). Prints a console alert on Tier-1 fall / faint.
+    Returns (fall_tids, faint_tids). Detection is informative only — the CSV
+    labels used for training come post-hoc, not from here."""
+    tracks  = frame['tracks']
+    heights = frame['heights']
+    fall_tids  = set()
+    faint_tids = set()
+    active_tids = {t['tid'] for t in tracks}
+    for t in tracks:
+        tid = t['tid']
+        h = heights.get(tid)              # None if no TLV 1012 this frame
+        if h is None:
+            fall_detector.bump_frame(tid)
+            continue
+        _h_extent = h.get('maxZ', 0) - h.get('minZ', 0)
+        _max_z    = h.get('maxZ', 0)
+        # Ghost track near a standing person: small vertical extent above floor.
+        if _h_extent < 0.25 and _max_z > 0.8:
+            fall_detector.bump_frame(tid)
+            continue
+        # Too few points while above floor level → ghost.
+        _n_pts = sum(1 for idx in frame['indices'] if idx == tid)
+        if _n_pts < 10 and _max_z > 0.8:
+            fall_detector.bump_frame(tid)
+            continue
+        is_fall, is_faint = fall_detector.update(tid, h, t)
+        t_rel = (time.monotonic_ns() - t0_mono) / 1e9
+        if is_fall:
+            fall_tids.add(tid)
+            peak_vz = fall_detector._last_peak_vz.get(tid, 0.0)
+            print(f'[REC]  t={t_rel:5.1f}s  >> CAIDA Tier-1  tid={tid}  '
+                  f'vz={peak_vz:+.2f} m/s  pos=({t["x"]:.2f},{t["y"]:.2f})',
+                  flush=True)
+        if is_faint:
+            faint_tids.add(tid)
+            print(f'[REC]  t={t_rel:5.1f}s  >> INMOVIL/FAINT  tid={tid}',
+                  flush=True)
+    fall_detector.cleanup_old_tracks(active_tids)
+    return fall_tids, faint_tids
+
+
 def _radar_loop(reader: FrameReader, logger: MlCsvLogger,
-                stop_ns: int, stats: dict):
-    """Minimal radar capture loop — no fall detection, no plotting."""
+                stop_ns: int, stats: dict,
+                fall_detector: FallDetector = None, t0_mono: int = 0):
+    """Radar capture loop. With fall_detector set (--live-fall), runs the
+    two-tier detector inline and prints console alerts; otherwise pure record."""
     frames = 0
     drops  = 0
+    falls  = 0
     while time.monotonic_ns() < stop_ns:
         frame = reader.read_frame()
         if frame is None:
             drops += 1
             continue
-        # No fall detection during pure recording — labels come post-hoc.
-        logger.log(frame, fall_tids=set(), faint_tids=set(), fall_detector=None)
+        if fall_detector is not None:
+            fall_tids, faint_tids = _detect_frame(frame, fall_detector, t0_mono)
+            falls += len(fall_tids)
+        else:
+            fall_tids, faint_tids = set(), set()
+        logger.log(frame, fall_tids=fall_tids, faint_tids=faint_tids,
+                   fall_detector=fall_detector)
         frames += 1
     stats['frames'] = frames
     stats['drops']  = drops
+    stats['falls']  = falls
 
 
 # ── main ────────────────────────────────────────────────────────────────────
@@ -78,6 +131,10 @@ def main():
                     help='Skip IR capture entirely (radar-only session)')
     ap.add_argument('--sessions-dir', default='sessions',
                     help='Base directory for session folders (default: sessions/)')
+    ap.add_argument('--live-fall', action='store_true',
+                    help='Run the two-tier fall detector inline and print a '
+                         'console alert on Tier-1 falls (informative; labels '
+                         'still come post-hoc). No GUI, minimal fps impact.')
     args = ap.parse_args()
 
     use_ir = (not args.no_ir) and (args.ir_hz > 0)
@@ -122,10 +179,15 @@ def main():
     t0_wall = time.strftime('%Y-%m-%dT%H:%M:%S%z') or time.strftime('%Y-%m-%dT%H:%M:%S')
     stop_ns = t0_mono + int(args.duration * 1e9)
 
+    fall_detector = FallDetector(frame_period_s=0.05) if args.live_fall else None
+    if fall_detector is not None:
+        print('[REC] Live fall detection ON (Tier-1 vz <= -1.15 m/s)')
+
     print(f'[REC] Recording for {args.duration:.1f}s ...')
-    stats = {'frames': 0, 'drops': 0}
+    stats = {'frames': 0, 'drops': 0, 'falls': 0}
     try:
-        _radar_loop(reader, logger, stop_ns, stats)
+        _radar_loop(reader, logger, stop_ns, stats,
+                    fall_detector=fall_detector, t0_mono=t0_mono)
     except KeyboardInterrupt:
         print('\n[REC] Interrupted')
 
@@ -155,6 +217,8 @@ def main():
     radar_fps = stats['frames'] / duration_s if duration_s > 0 else 0.0
     print(f'[REC] Radar: {stats["frames"]} frames, {stats["drops"]} drops, '
           f'{radar_fps:.2f} fps')
+    if fall_detector is not None:
+        print(f'[REC] Live fall detection: {stats["falls"]} Tier-1 alert(s)')
 
     # ── manifest ──
     # rows == frames here because the logger writes one row per frame even when
