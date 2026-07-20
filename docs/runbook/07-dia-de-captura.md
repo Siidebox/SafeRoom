@@ -85,9 +85,9 @@ anterior corriendo, simula una caída. Debe aparecer la alerta Tier-1
 etiquetas son post-hoc), pero revisa que la caída fue franca.
 
 **2.4 Sincronía radar↔IR** (usa la sesión precheck):
-
+/home/guillermo/SafeRoom/sessions/20260720_103819_synccheck
 ```bash
-~/SafeRoom/.venv/bin/python tools/check_sync.py sessions/<precheck_id> --max-drift-ms 50
+~/SafeRoom/.venv/bin/python tools/check_sync.py sessions/20260720_103819_synccheck --max-drift-ms 50 --plot
 ```
 
 **2.5 Calibración IR del bloque 1** (60 s, habitación VACÍA — sal tú también):
@@ -106,14 +106,31 @@ Si da error (alguien estaba dentro), regrábala. **Listo para grabar.**
 
 ## Fase 3 — Grabación por bloques (~3.5 h)
 
-Plantilla de comando (cambia `--duration`, `--name`, `--notes`):
+Cada actividad tiene su comando abajo, listo para copiar. Los directorios de
+sesión se nombran `<timestamp>_<name>`, así que el nombre solo lleva
+`<sujeto>_<actividad>_<posicion>` (el timestamp lo pone el recorder).
+
+**Define el sujeto una vez** al empezar el día (evita repetirlo en cada
+comando):
 
 ```bash
-~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --duration <SEG> --ir-hz 16 --name <sujeto>_<actividad>_<posicion> --subject <sujeto> --notes "<orientacion>,<ropa>,<hora>"
+cd ~/SafeRoom
+SUJ=guillermo          # cambia por el identificador del sujeto real
+CFG=code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg
 ```
 
-**Al inicio de cada bloque nuevo (~1 h): grabar `calib_bN` de 60 s vacía**
-(mismo comando que 2.5) y validarla.
+La variable `$SUJ` y `$CFG` solo viven en esa terminal — si abres otra o
+reconectas por SSH, vuelve a definirlas.
+
+**Al inicio de cada bloque nuevo (~1 h): calib de 60 s con la sala vacía**
+(cambia `bN` por el número de bloque) y valídala:
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 60 --ir-hz 16 --name calib_b1 --subject none --notes "calibracion IR bloque 1"
+~/SafeRoom/.venv/bin/python -c "import sys; sys.path.insert(0,'tools'); from replay_session import load_background_from_session as l; l('sessions/<id_calib_bN>'); print('calib OK')"
+```
+
+Tabla-resumen (el guion de cada sesión; los comandos van justo debajo):
 
 | Bloque | Sesiones | `--duration` | Guion de cada sesión |
 |---|---|---|---|
@@ -127,6 +144,74 @@ Plantilla de comando (cambia `--duration`, `--name`, `--notes`):
 | B4 | 2 × none | 100 | Habitación vacía. |
 | B5 | 1 × negativo | 900–1800 | Segunda sesión negativa, distinta hora/ropa si es posible. |
 | B5 | 2 × continuo | 300 | Entrar → caminar → de pie → sentarse → caminar → **caída** → suelo ≥ 10 s → levantarse → salir. |
+
+En cada comando edita lo que va **entre paréntesis** (posición, orientación,
+número de repetición) antes de lanzarlo.
+
+**B1 — fall (25–30 sesiones, 30 s):** rota `pos` (centro/izq/dcha, ≥ 3 puntos)
+y la orientación en `--notes` (frontal/lat-izq/lat-dcha/atras):
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 30 --ir-hz 16 --name ${SUJ}_fall_(centro) --subject $SUJ --notes "(frontal),(camiseta_algodon),(tarde)"
+```
+
+**B2 — negativo (1 sesión larga, ~1200 s):** vida normal con confusores:
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 1200 --ir-hz 16 --name ${SUJ}_negativo_1 --subject $SUJ --notes "vida_normal_confusores,(camiseta_algodon),(tarde)"
+```
+
+**B3 — near_fall (15 sesiones, 20 s):** tropiezo sin tocar suelo:
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 20 --ir-hz 16 --name ${SUJ}_nearfall_(centro) --subject $SUJ --notes "(frontal),(camiseta_algodon),(tarde)"
+```
+
+**B3 — sit (20 sesiones, 20 s):** cambia `silla`→`suelo` a mitad (10 y 10):
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 20 --ir-hz 16 --name ${SUJ}_sit_(silla) --subject $SUJ --notes "(camiseta_algodon),(tarde)"
+```
+
+**B4 — walk (15–20 sesiones, 30 s):** rota `dir` (frontal/perpendicular/diag):
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 30 --ir-hz 16 --name ${SUJ}_walk_(perpendicular) --subject $SUJ --notes "(camiseta_algodon),(tarde)"
+```
+
+**B4 — lie (10 sesiones, 25 s):** tumbarse voluntario:
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 25 --ir-hz 16 --name ${SUJ}_lie_(centro) --subject $SUJ --notes "(camiseta_algodon),(tarde)"
+```
+
+**B4 — stand (10 sesiones, 20 s):** quieto de pie, cambia de sitio:
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 20 --ir-hz 16 --name ${SUJ}_stand_(centro) --subject $SUJ --notes "(camiseta_algodon),(tarde)"
+```
+
+**B4 — none (2 sesiones, 100 s):** habitación vacía (sujeto `none`, sal tú):
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 100 --ir-hz 16 --name none_(1) --subject none --notes "habitacion_vacia,(tarde)"
+```
+
+**B5 — negativo 2 (1 sesión, ~1200 s):** otra hora/ropa si puedes:
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 1200 --ir-hz 16 --name ${SUJ}_negativo_2 --subject $SUJ --notes "vida_normal_confusores,(sudadera_sintetica),(noche)"
+```
+
+**B5 — continuo (2 sesiones, 300 s):** secuencia completa con caída incluida:
+
+```bash
+~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg $CFG --duration 300 --ir-hz 16 --name ${SUJ}_continuo_(1) --subject $SUJ --notes "entrar-caminar-caida-suelo-salir,(camiseta_algodon),(noche)"
+```
+
+> Los paréntesis son marcadores para editar — **quítalos** al poner el valor
+> real (`${SUJ}_fall_(centro)` → `${SUJ}_fall_centro`). El nombre de sesión no
+> lleva espacios; las `--notes` sí pueden, por eso van entre comillas.
 
 Consejos:
 - Cada sesión imprime sus fps al terminar — **mira los quality gates antes
