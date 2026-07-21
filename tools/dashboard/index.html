@@ -124,22 +124,17 @@
       </div>
     </section>
 
-    <!-- Thermal mini-view + Activity -->
-    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div class="lg:col-span-1 rounded-xl border border-ink-800 bg-ink-900/40 p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="text-sm font-semibold text-slate-300" data-i18n="thermal_live">Live thermal</h3>
-          <span id="thermal-range" class="text-xs text-slate-500"></span>
-        </div>
-        <canvas id="thermal-canvas" width="32" height="24" class="w-full h-auto rounded bg-ink-950" aria-label="Live thermal image"></canvas>
-        <p class="text-xs text-slate-500 mt-2" data-i18n="thermal_note">32 × 24 IR array, bilinear-rendered</p>
+    <!-- Recent activity (full width; live thermal now lives inside Room view) -->
+    <section class="rounded-xl border border-ink-800 bg-ink-900/40 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-slate-300" data-i18n="recent_activity">Recent activity</h3>
+        <button id="clear-btn" class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-ink-800 hover:bg-ink-700 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer" title="Clear history">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+          <span data-i18n="clear_history">Clear</span>
+        </button>
       </div>
-
-      <div class="lg:col-span-2 rounded-xl border border-ink-800 bg-ink-900/40 p-4">
-        <h3 class="text-sm font-semibold text-slate-300 mb-3" data-i18n="recent_activity">Recent activity</h3>
-        <ul id="event-list" class="divide-y divide-ink-800"></ul>
-        <p id="event-empty" class="text-sm text-slate-500 italic py-6 text-center" data-i18n="no_events">No events recorded yet.</p>
-      </div>
+      <ul id="event-list" class="divide-y divide-ink-800"></ul>
+      <p id="event-empty" class="text-sm text-slate-500 italic py-6 text-center" data-i18n="no_events">No events recorded yet.</p>
     </section>
 
     <footer class="text-center text-xs text-slate-600 mt-10">
@@ -149,8 +144,8 @@
 
   <!-- ===== Room 2D modal ===== -->
   <div id="room-modal" class="hidden fixed inset-0 z-50 items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-    <div class="w-full max-w-2xl rounded-2xl border border-ink-800 bg-ink-900 shadow-2xl overflow-hidden">
-      <div class="flex items-center justify-between px-5 py-3 border-b border-ink-800">
+    <div class="w-full max-w-4xl rounded-2xl border border-ink-800 bg-ink-900 shadow-2xl overflow-hidden max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-ink-800 sticky top-0 bg-ink-900 z-10">
         <div class="flex items-center gap-3">
           <h2 class="text-lg font-semibold text-slate-100" data-i18n="room_title">Live room — 2D floor plan</h2>
           <span id="room-count" class="text-xs px-2 py-0.5 rounded-full bg-ink-800 text-slate-300"></span>
@@ -159,18 +154,31 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
       </div>
-      <div class="p-5">
-        <div class="relative w-full rounded-xl bg-ink-950 border border-ink-800 overflow-hidden" style="aspect-ratio: 4 / 3;">
-          <canvas id="room-canvas" class="absolute inset-0 w-full h-full" style="image-rendering:auto"></canvas>
-          <div id="room-overlay" class="absolute inset-0 grid place-items-center text-sm text-slate-500 pointer-events-none" data-i18n="room_waiting">Waiting for radar positions…</div>
-        </div>
-        <div class="flex items-center justify-between mt-3 text-xs text-slate-500">
-          <div class="flex items-center gap-4">
+      <div class="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+        <!-- 2D floor plan -->
+        <div>
+          <h3 class="text-sm font-semibold text-slate-300 mb-2" data-i18n="room_floor">Floor plan</h3>
+          <div class="relative w-full rounded-xl bg-ink-950 border border-ink-800 overflow-hidden" style="aspect-ratio: 4 / 3;">
+            <canvas id="room-canvas" class="absolute inset-0 w-full h-full" style="image-rendering:auto"></canvas>
+            <div id="room-overlay" class="absolute inset-0 grid place-items-center text-sm text-slate-500 pointer-events-none" data-i18n="room_waiting">Waiting for radar positions…</div>
+          </div>
+          <div class="flex items-center gap-4 mt-3 text-xs text-slate-500">
             <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-ok"></span><span data-i18n="people_label">Tracked</span></span>
             <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-alert"></span><span data-i18n="ev_fall_fast">Fall</span></span>
             <span class="flex items-center gap-1.5"><svg class="w-3 h-3 text-brand" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 2 22h20z"/></svg><span data-i18n="room_sensor">Sensor</span></span>
           </div>
-          <span data-i18n="room_hint" class="text-right hidden sm:inline">Top-down view.</span>
+        </div>
+        <!-- Live thermal -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-semibold text-slate-300" data-i18n="thermal_live">Live thermal</h3>
+            <span id="thermal-range" class="text-xs text-slate-500"></span>
+          </div>
+          <div class="relative w-full rounded-xl bg-ink-950 border border-ink-800 overflow-hidden" style="aspect-ratio: 4 / 3;">
+            <canvas id="thermal-canvas" width="32" height="24" class="absolute inset-0 w-full h-full" aria-label="Live thermal image"></canvas>
+            <div id="thermal-overlay" class="absolute inset-0 grid place-items-center text-sm text-slate-500 pointer-events-none" data-i18n="thermal_waiting">Waiting for first frame…</div>
+          </div>
+          <p class="text-xs text-slate-500 mt-3" data-i18n="thermal_note">32 × 24 IR array, bilinear-rendered</p>
         </div>
       </div>
     </div>
@@ -202,6 +210,9 @@
         recent_activity: 'Recent activity',
         no_events: 'No events recorded yet.',
         room_view: 'Room view',
+        room_floor: 'Floor plan',
+        clear_history: 'Clear',
+        clear_confirm: 'Delete all activity history? This cannot be undone.',
         room_title: 'Live room — 2D floor plan',
         room_close: 'Close',
         room_empty: 'Room empty — no one being tracked',
@@ -245,6 +256,9 @@
         recent_activity: 'Actividad reciente',
         no_events: 'Sin eventos registrados aún.',
         room_view: 'Ver sala',
+        room_floor: 'Plano 2D',
+        clear_history: 'Borrar',
+        clear_confirm: '¿Borrar todo el historial de actividad? Esta acción no se puede deshacer.',
         room_title: 'Sala en vivo — plano 2D',
         room_close: 'Cerrar',
         room_empty: 'Sala vacía — no se sigue a nadie',
@@ -383,13 +397,16 @@
     function renderThermal(thermal) {
       const canvas = document.getElementById('thermal-canvas');
       const range = document.getElementById('thermal-range');
+      const overlay = document.getElementById('thermal-overlay');
       if (!thermal || !thermal.pixels) {
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = '#0B1220';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         range.textContent = '';
+        if (overlay) overlay.classList.remove('hidden');
         return;
       }
+      if (overlay) overlay.classList.add('hidden');
       canvas.width = thermal.width;
       canvas.height = thermal.height;
       const ctx = canvas.getContext('2d');
@@ -597,6 +614,16 @@
       await fetch('/ack_alert', { method: 'POST' });
     });
 
+    // ============ Clear history ============
+    document.getElementById('clear-btn').addEventListener('click', async () => {
+      if (!confirm(t('clear_confirm'))) return;
+      try {
+        await fetch('/events/clear', { method: 'POST' });
+        recentEvents = [];
+        renderEvents();
+      } catch (e) { console.error('clear', e); }
+    });
+
     // ============ SSE ============
     let es;
     function connectStream() {
@@ -616,6 +643,7 @@
         if (!ev.data || ev.data.startsWith(':')) return;
         let msg; try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.state) lastState = msg.state;
+        if (msg.kind === 'clear') { recentEvents = []; }
         if (msg.kind === 'event' && msg.event) {
           recentEvents.unshift({ ts: msg.event.timestamp, type: msg.event.type, details: msg.event.details });
           if (['fall_fast', 'fall_confirmed', 'fall_failopen', 'fall_candidate', 'faint'].includes(msg.event.type)) {

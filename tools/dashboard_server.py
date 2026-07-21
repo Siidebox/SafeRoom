@@ -298,6 +298,16 @@ async def get_events(request: Request, limit: int = 50):
     ]
 
 
+@app.post("/events/clear")
+async def clear_events(request: Request):
+    """Permanently delete all recorded events. Does not touch presence/alert state."""
+    conn: sqlite3.Connection = request.app.state.db
+    conn.execute("DELETE FROM events")
+    conn.commit()
+    await state.broadcast({"kind": "clear", "state": state.snapshot()})
+    return {"ok": True}
+
+
 @app.post("/ack_alert")
 async def ack_alert():
     state.active_alert = None

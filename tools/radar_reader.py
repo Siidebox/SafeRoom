@@ -1189,6 +1189,72 @@ def _emit_fall_event(notifier, event_type: str, track: dict, t_mono_ns: int,
         f.write(json.dumps(row) + '\n')
 
 
+def start_ir_capture(args, notifier=None, want_panel=False, want_confirmer=False):
+    """Start MLX90640 capture and wire it to the requested consumers.
+
+    Returns (ir_cap, ir_queue, confirmer, ir_rot_k). Any of ir_cap/ir_queue/
+    confirmer may be None. The frame callback forwards each rotated frame to:
+      * the IR confirmer (fall fusion)      — only if want_confirmer
+      * the dashboard thermal panel         — only if notifier is not None
+      * the Qt live panel queue             — only if want_panel
+    Thermal forwarding to the dashboard is throttled to ~8 Hz to keep the
+    notifier queue light regardless of the MLX refresh rate.
+    """
+    ir_rot_k = (args.ir_rotate // 90) % 4
+    try:
+        from ir_recorder import Mlx90640Capture
+        ir_queue = queue.Queue(maxsize=2) if want_panel else None
+
+        confirmer = None
+        if want_confirmer:
+            if (not args.no_confirmer) and _IR_CONFIRMER_AVAILABLE:
+                confirmer = IrConfirmer(IrConfirmerParams())
+                print('[IR] confirmer enabled — calibrating background...')
+            elif args.no_confirmer:
+                print('[IR] confirmer DISABLED (--no-confirmer)')
+            else:
+                print('[WARN] ir_confirmer not importable; confirmer off.')
+
+        last_thermal = [0.0]  # mutable closure holder for throttle
+        def _ir_push(frame_np, t_mono_ns):
+            rotated = np.rot90(frame_np, k=ir_rot_k) if ir_rot_k else frame_np
+            if confirmer is not None:
+                confirmer.push(rotated, t_mono_ns)
+            if notifier is not None:
+                now = time.time()
+                if now - last_thermal[0] >= 0.12:   # ~8 Hz to the dashboard
+                    finite = np.isfinite(rotated)
+                    valid_pct = (100.0 * float(finite.sum()) / finite.size
+                                 if finite.size else 0.0)
+                    notifier.thermal(rotated, valid_pct=valid_pct)
+                    last_thermal[0] = now
+            if ir_queue is not None:
+                try:
+                    while True:
+                        ir_queue.get_nowait()
+                except Exception:
+                    pass
+                try:
+                    ir_queue.put_nowait((rotated, t_mono_ns))
+                except Exception:
+                    pass
+
+        ir_cap = Mlx90640Capture(refresh_hz=args.ir_hz,
+                                 frame_callback=_ir_push,
+                                 store_frames=False)
+        ir_cap.start()
+        dest = []
+        if want_panel:      dest.append('panel')
+        if notifier is not None: dest.append('dashboard')
+        if confirmer is not None: dest.append('confirmer')
+        print(f'[IR] capture active @ {args.ir_hz} Hz, rotation {args.ir_rotate}° '
+              f'→ {", ".join(dest) or "no consumers"}')
+        return ir_cap, ir_queue, confirmer, ir_rot_k
+    except Exception as e:  # noqa: BLE001
+        print(f'[WARN] Could not start IR capture ({e}). Continuing without IR.')
+        return None, None, None, ir_rot_k
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Frame reading loop (runs in main thread or background thread)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1502,54 +1568,14 @@ def main():
         # Frame reader runs in a daemon background thread.
         bbox = room_bounds
 
-        # ── Optional IR live capture ──────────────────────────────────────
+        # ── Optional IR live capture (panel + confirmer + dashboard) ──────
         ir_queue  = None
         ir_cap    = None
-        ir_rot_k  = 0
+        ir_rot_k  = (args.ir_rotate // 90) % 4
         confirmer = None
         if args.ir:
-            try:
-                from ir_recorder import Mlx90640Capture
-                ir_queue = queue.Queue(maxsize=2)
-                ir_rot_k = (args.ir_rotate // 90) % 4
-
-                if (not args.no_confirmer) and _IR_CONFIRMER_AVAILABLE:
-                    confirmer = IrConfirmer(IrConfirmerParams())
-                    print('[IR] confirmer enabled — calibrating background...')
-                elif args.no_confirmer:
-                    print('[IR] confirmer DISABLED (--no-confirmer)')
-                else:
-                    print('[WARN] ir_confirmer not importable; confirmer off.')
-
-                def _ir_push(frame_np, t_mono_ns):
-                    # Apply the same rotation we apply for display so the
-                    # confirmer reasons in image (post-rotation) coordinates.
-                    rotated = np.rot90(frame_np, k=ir_rot_k) if ir_rot_k else frame_np
-                    if confirmer is not None:
-                        confirmer.push(rotated, t_mono_ns)
-                    # Keep only the freshest frame for the live panel.
-                    try:
-                        while True:
-                            ir_queue.get_nowait()
-                    except Exception:
-                        pass
-                    try:
-                        ir_queue.put_nowait((rotated, t_mono_ns))
-                    except Exception:
-                        pass
-
-                ir_cap = Mlx90640Capture(refresh_hz=args.ir_hz,
-                                         frame_callback=_ir_push,
-                                         store_frames=False)
-                ir_cap.start()
-                print(f'[IR] live panel active @ {args.ir_hz} Hz, '
-                      f'rotation {args.ir_rotate}°')
-            except Exception as e:  # noqa: BLE001
-                print(f'[WARN] Could not start IR capture ({e}). '
-                      'Continuing without IR panel.')
-                ir_queue  = None
-                ir_cap    = None
-                confirmer = None
+            ir_cap, ir_queue, confirmer, ir_rot_k = start_ir_capture(
+                args, notifier=notifier, want_panel=True, want_confirmer=True)
 
         window = RadarWindow(frame_queue, stop_event, boundary_box=bbox,
                              plot3d=args.plot3d,
@@ -1587,6 +1613,13 @@ def main():
             if notifier is not None:
                 notifier.shutdown()
     else:
+        # Headless: no Qt panel and (by design) no IR fusion confirmer, but if
+        # --ir is set we still capture thermal frames and forward them to the
+        # dashboard so the Live thermal panel works during a live --dashboard run.
+        ir_cap = None
+        if args.ir:
+            ir_cap, _iq, _cf, _rk = start_ir_capture(
+                args, notifier=notifier, want_panel=False, want_confirmer=False)
         try:
             _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                        args.sensor_height, args.sensor_tilt, False,
@@ -1597,6 +1630,11 @@ def main():
         finally:
             data_ser.close()
             logger.close()
+            if ir_cap is not None:
+                try:
+                    ir_cap.stop_and_collect()
+                except Exception:
+                    pass
             if notifier is not None:
                 notifier.shutdown()
 
