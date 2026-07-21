@@ -12,6 +12,7 @@ la Raspberry Pi (usuario `guillermo`) y que el repo vive en `~/SafeRoom`.
 | Entrenar y evaluar modelos | [05-train-eval.md](05-train-eval.md) |
 | Diagnóstico y mantenimiento | [06-troubleshooting.md](06-troubleshooting.md) |
 | **Día de captura del dataset (guía completa)** | [07-dia-de-captura.md](07-dia-de-captura.md) |
+| **Prueba en vivo: detector ML + dashboard** | [09-prueba-en-vivo.md](09-prueba-en-vivo.md) |
 
 ## Antes de cualquier prueba con radar
 
