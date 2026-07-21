@@ -490,8 +490,6 @@
       roomOpen = true;
       roomModal.classList.remove('hidden');
       roomModal.classList.add('flex');
-      // Paint both panels immediately (thermal was skipped while closed).
-      if (lastState) renderThermal(lastState.thermal);
       renderRoom();
     }
     function closeRoom() {
@@ -602,35 +600,13 @@
       }
     }
 
-    function render(opts) {
+    function render() {
       if (!lastState) return;
       renderStatus(lastState);
       renderSensors(lastState);
-      // Thermal canvas only lives inside the Room View modal — skip its
-      // per-pixel colormap work entirely when the modal is closed.
-      if (roomOpen) {
-        renderThermal(lastState.thermal);
-        renderRoom();
-      }
-      // Rebuild the event list only when the event history actually changed
-      // (a new event, a clear, or a periodic timestamp refresh) — not on
-      // every state/heartbeat tick.
-      if (!opts || opts.events) renderEvents();
-    }
-
-    // Coalesce bursts of SSE messages into a single rAF-aligned repaint.
-    let renderPending = false;
-    let renderEventsPending = false;
-    function scheduleRender(withEvents) {
-      if (withEvents) renderEventsPending = true;
-      if (renderPending) return;
-      renderPending = true;
-      requestAnimationFrame(() => {
-        renderPending = false;
-        const ev = renderEventsPending;
-        renderEventsPending = false;
-        render({ events: ev });
-      });
+      renderThermal(lastState.thermal);
+      renderEvents();
+      renderRoom();
     }
 
     // ============ Acknowledge ============
@@ -667,17 +643,15 @@
         if (!ev.data || ev.data.startsWith(':')) return;
         let msg; try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.state) lastState = msg.state;
-        let eventsChanged = false;
-        if (msg.kind === 'clear') { recentEvents = []; eventsChanged = true; }
+        if (msg.kind === 'clear') { recentEvents = []; }
         if (msg.kind === 'event' && msg.event) {
           recentEvents.unshift({ ts: msg.event.timestamp, type: msg.event.type, details: msg.event.details });
-          eventsChanged = true;
           if (['fall_fast', 'fall_confirmed', 'fall_failopen', 'fall_candidate', 'faint'].includes(msg.event.type)) {
             notifyBrowser(msg.event.type, JSON.stringify(msg.event.details));
           }
         }
         netLatency.innerHTML = `${Math.round((Date.now()/1000 - (lastState?.now ?? Date.now()/1000)) * 1000)} <span class="text-xs text-slate-500">ms</span>`;
-        scheduleRender(eventsChanged);
+        render();
       };
     }
 
@@ -689,9 +663,8 @@
         recentEvents = (await evRes.json()).map(e => ({ ts: e.ts, type: e.type, details: e.details }));
       } catch (e) { console.error('bootstrap', e); }
       applyI18n();
-      render();            // initial paint incl. bootstrapped event list
       connectStream();
-      setInterval(render, 5000); // keep timestamps + event list fresh
+      setInterval(render, 5000); // keep timestamps fresh
     }
     bootstrap();
   </script>

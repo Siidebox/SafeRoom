@@ -20,8 +20,8 @@ import threading
 import time
 from typing import Any
 
-import http.client
-import urllib.parse
+import urllib.request
+import urllib.error
 import json
 import os
 
@@ -34,12 +34,6 @@ class Notifier:
     def __init__(self, base_url: str = DEFAULT_URL, source: str = "radar"):
         self.base = base_url.rstrip("/")
         self.source = source
-        parts = urllib.parse.urlsplit(self.base)
-        self._host = parts.hostname or "localhost"
-        self._port = parts.port or (443 if parts.scheme == "https" else 80)
-        self._https = parts.scheme == "https"
-        self._base_path = parts.path.rstrip("/")  # in case URL has a path prefix
-        self._conn: http.client.HTTPConnection | None = None
         self.q: queue.Queue[tuple[str, dict]] = queue.Queue(maxsize=256)
         self.stop_evt = threading.Event()
         self.t = threading.Thread(target=self._worker, daemon=True, name="saferoom-notifier")
@@ -100,27 +94,12 @@ class Notifier:
         except queue.Full:
             pass
         self.t.join(timeout=2.0)
-        self._close_conn()
 
     def _enqueue(self, path: str, payload: dict) -> None:
         try:
             self.q.put_nowait((path, payload))
         except queue.Full:
             pass  # drop on overflow rather than block the producer
-
-    def _get_conn(self) -> http.client.HTTPConnection:
-        if self._conn is None:
-            cls = http.client.HTTPSConnection if self._https else http.client.HTTPConnection
-            self._conn = cls(self._host, self._port, timeout=1.5)
-        return self._conn
-
-    def _close_conn(self) -> None:
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            except Exception:  # noqa: BLE001
-                pass
-            self._conn = None
 
     def _worker(self) -> None:
         while not self.stop_evt.is_set():
@@ -132,20 +111,15 @@ class Notifier:
                 return
             try:
                 data = json.dumps(payload).encode("utf-8")
-                conn = self._get_conn()
-                conn.request(
-                    "POST", self._base_path + path, body=data,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Content-Length": str(len(data)),
-                        "Connection": "keep-alive",
-                    },
+                req = urllib.request.Request(
+                    self.base + path, data=data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
                 )
-                resp = conn.getresponse()
-                resp.read()  # drain so the connection can be reused
-            except (http.client.HTTPException, OSError):
-                # dashboard offline / stale connection — drop, rebuild lazily next time
-                self._close_conn()
+                with urllib.request.urlopen(req, timeout=1.5):
+                    pass
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                pass  # dashboard offline — drop event
 
 
 def _scalar(v: Any) -> Any:
