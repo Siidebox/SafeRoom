@@ -72,6 +72,16 @@ class ThermalIn(BaseModel):
     valid_pct: float = 100.0
 
 
+class TracksIn(BaseModel):
+    timestamp: float = Field(default_factory=time.time)
+    fps: float = 0.0
+    bounds: list[float] | None = Field(
+        None, description="[xmin,xmax,ymin,ymax,zmin,zmax] room boundary in metres")
+    sensor: list[float] | None = Field(None, description="[x,y] sensor position in metres")
+    tracks: list[dict[str, Any]] = Field(
+        default_factory=list, description="live tracks, each {tid,x,y,z}")
+
+
 def db_connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -109,6 +119,9 @@ class State:
         self.presence: bool = False
         self.last_presence_change: float = 0.0
         self.active_alert: dict[str, Any] | None = None  # current unresolved fall/faint
+        self.tracks: list[dict[str, Any]] = []           # live track positions
+        self.room_bounds: list[float] | None = None      # [xmin,xmax,ymin,ymax,zmin,zmax]
+        self.sensor_xy: list[float] | None = None        # [x,y]
         self.subscribers: list[asyncio.Queue] = []
 
     async def broadcast(self, message: dict[str, Any]) -> None:
@@ -128,6 +141,11 @@ class State:
             "presence": self.presence,
             "last_presence_change": self.last_presence_change,
             "active_alert": self.active_alert,
+            "tracks": self.tracks,
+            "room": {
+                "bounds": self.room_bounds,
+                "sensor": self.sensor_xy,
+            } if self.room_bounds else None,
             "radar": {
                 "online": (now - self.last_radar_ts) < SENSOR_TIMEOUT_S,
                 "fps": round(self.last_radar_fps, 1),
@@ -238,6 +256,20 @@ async def post_thermal(t: ThermalIn):
     state._mlx_times[:] = [x for x in state._mlx_times if t.timestamp - x < 2.0]  # type: ignore[attr-defined]
     state.last_mlx_fps = len(state._mlx_times) / 2.0  # type: ignore[attr-defined]
     await state.broadcast({"kind": "thermal", "state": state.snapshot()})
+    return {"ok": True}
+
+
+@app.post("/tracks")
+async def post_tracks(tk: TracksIn):
+    """Live track positions for the 2D room view. Not persisted (like /thermal)."""
+    state.last_radar_ts = tk.timestamp
+    state.last_radar_fps = float(tk.fps)
+    state.tracks = tk.tracks
+    if tk.bounds:
+        state.room_bounds = tk.bounds
+    if tk.sensor:
+        state.sensor_xy = tk.sensor
+    await state.broadcast({"kind": "tracks", "state": state.snapshot()})
     return {"ok": True}
 
 

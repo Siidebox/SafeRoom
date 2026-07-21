@@ -1195,11 +1195,16 @@ def _emit_fall_event(notifier, event_type: str, track: dict, t_mono_ns: int,
 
 def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                sensor_h, sensor_t, use_plot, ml_detector=None, z_offset=0.0,
-               confirmer=None, no_confirmer=False, notifier=None):
+               confirmer=None, no_confirmer=False, notifier=None,
+               bounds=None, sensor_xy=None):
     frame_count  = 0
     fall_count   = 0
     faint_count  = 0
     ml_fall_count = 0
+    # Dashboard live-state helpers (only used when a notifier is attached).
+    prev_presence = None          # None = unknown; forces first emit
+    fps_times     = []            # rolling wall-clock stamps for fps estimate
+    last_tracks_push = 0.0        # throttle track heartbeat to ~2 Hz
     print('\n--- Reading frames. Press Ctrl+C to stop. ---\n')
     try:
         while not stop_event.is_set():
@@ -1328,6 +1333,24 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                   + (', '.join(trk_strs) if trk_strs else 'no tracks'))
 
             logger.log(frame, fall_tids, faint_tids, fall_detector)
+
+            # ── Dashboard live state: presence + fps + track positions ──────
+            if notifier is not None:
+                now = time.time()
+                fps_times.append(now)
+                fps_times[:] = [x for x in fps_times if now - x < 2.0]
+                fps = len(fps_times) / 2.0
+
+                present = bool(frame['presence'])
+                if present != prev_presence:
+                    notifier.event('presence' if present else 'presence_lost',
+                                   fps=round(fps, 1))
+                    prev_presence = present
+
+                # Throttle the position heartbeat to ~2 Hz to keep UART/CPU light.
+                if now - last_tracks_push >= 0.5:
+                    notifier.tracks(round(fps, 1), bounds, sensor_xy, tracks)
+                    last_tracks_push = now
 
             if use_plot and not frame_queue.full():
                 frame_queue.put_nowait((frame, fall_tids, faint_tids))
@@ -1465,6 +1488,11 @@ def main():
         except Exception as e:
             print(f'[WARN] Could not init dashboard notifier: {e}')
 
+    # Room geometry for the dashboard 2D view. The sensor_to_world transform
+    # places the sensor at the world origin, so sensor_xy = (0, 0).
+    room_bounds = parse_boundary_box(args.cfg)
+    sensor_xy = (0.0, 0.0)
+
     import queue
     frame_queue = queue.Queue(maxsize=4)
     stop_event  = threading.Event()
@@ -1472,7 +1500,7 @@ def main():
     if args.plot or args.plot3d:
         # Qt event loop must run in the main thread.
         # Frame reader runs in a daemon background thread.
-        bbox = parse_boundary_box(args.cfg)
+        bbox = room_bounds
 
         # ── Optional IR live capture ──────────────────────────────────────
         ir_queue  = None
@@ -1538,6 +1566,8 @@ def main():
                 'confirmer': confirmer if args.ir else None,
                 'no_confirmer': args.no_confirmer,
                 'notifier': notifier,
+                'bounds': room_bounds,
+                'sensor_xy': sensor_xy,
             },
             daemon=True,
         )
@@ -1562,7 +1592,8 @@ def main():
                        args.sensor_height, args.sensor_tilt, False,
                        ml_detector=ml_detector, z_offset=args.z_offset,
                        confirmer=None, no_confirmer=args.no_confirmer,
-                       notifier=notifier)
+                       notifier=notifier, bounds=room_bounds,
+                       sensor_xy=sensor_xy)
         finally:
             data_ser.close()
             logger.close()

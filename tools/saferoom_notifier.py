@@ -50,6 +50,30 @@ class Notifier:
         }
         self._enqueue("/event", payload)
 
+    def tracks(self, fps: float, bounds, sensor_xy, tracks_list) -> None:
+        """Push live track positions for the 2D room view.
+
+        Not persisted server-side (like thermal) — only updates live state.
+        `bounds` = (xmin,xmax,ymin,ymax,zmin,zmax) or None; `sensor_xy` = (x,y)
+        or None; `tracks_list` = iterable of dicts with tid/x/y/z.
+        """
+        payload = {
+            "timestamp": time.time(),
+            "fps": float(fps),
+            "bounds": list(bounds) if bounds is not None else None,
+            "sensor": list(sensor_xy) if sensor_xy is not None else None,
+            "tracks": [
+                {
+                    "tid": int(tk.get("tid", -1)),
+                    "x": _scalar(tk.get("x", 0.0)),
+                    "y": _scalar(tk.get("y", 0.0)),
+                    "z": _scalar(tk.get("z", 0.0)),
+                }
+                for tk in tracks_list
+            ],
+        }
+        self._enqueue("/tracks", payload)
+
     def thermal(self, frame_celsius, valid_pct: float = 100.0) -> None:
         arr = np.asarray(frame_celsius, dtype=np.float32)
         # Sanitise NaN/Inf to None so JSON is valid
