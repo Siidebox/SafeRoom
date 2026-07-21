@@ -33,13 +33,24 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     classification_report, confusion_matrix,
     roc_auc_score, average_precision_score,
     precision_recall_fscore_support,
 )
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 import xgboost as xgb
+
+
+def _build_logreg():
+    """Linear baseline: standardised features + balanced logistic regression."""
+    return Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', LogisticRegression(max_iter=1000, class_weight='balanced',
+                                   random_state=42)),
+    ])
 
 from feature_engineering import load_and_extract, WINDOW_SIZE, STRIDE
 
@@ -137,7 +148,7 @@ def train_lstm_fold(X_train_seq, y_train, X_val_seq, y_val,
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=5, factor=0.5, verbose=False
+        optimizer, patience=5, factor=0.5
     )
 
     X_t = torch.tensor(X_train_seq, dtype=torch.float32)
@@ -195,6 +206,7 @@ def run_loso_cv(X, X_seq, y, groups, feat_names, train_dl=True):
     all_rows  = []
     xgb_probs_all, rf_probs_all, lstm_probs_all = [], [], []
     xgb_labs, rf_labs, lstm_labs = [], [], []
+    lr_probs_all, lr_labs = [], []
 
     for held_out in unique_sessions:
         train_mask = groups != held_out
@@ -220,7 +232,8 @@ def run_loso_cv(X, X_seq, y, groups, feat_names, train_dl=True):
             xgb_model.fit(X_tr, y_tr)
         xgb_prob = xgb_model.predict_proba(X_va)[:, 1]
         xgb_pred = (xgb_prob >= 0.5).astype(int)
-        all_rows.append(eval_predictions(y_va, xgb_pred, xgb_prob, f'XGBoost_fold_{held_out}'))
+        xgb_row = eval_predictions(y_va, xgb_pred, xgb_prob, f'XGBoost_fold_{held_out}')
+        all_rows.append(xgb_row)
         xgb_probs_all.append(xgb_prob)
         xgb_labs.append(y_va)
 
@@ -232,14 +245,26 @@ def run_loso_cv(X, X_seq, y, groups, feat_names, train_dl=True):
         rf_model.fit(X_tr, y_tr)
         rf_prob = rf_model.predict_proba(X_va)[:, 1]
         rf_pred = (rf_prob >= 0.5).astype(int)
-        all_rows.append(eval_predictions(y_va, rf_pred, rf_prob, f'RF_fold_{held_out}'))
+        rf_row = eval_predictions(y_va, rf_pred, rf_prob, f'RF_fold_{held_out}')
+        all_rows.append(rf_row)
         rf_probs_all.append(rf_prob)
         rf_labs.append(y_va)
+
+        # ── Logistic Regression (linear baseline) ────────────────────────────
+        lr_model = _build_logreg()
+        lr_model.fit(X_tr, y_tr)
+        lr_prob = lr_model.predict_proba(X_va)[:, 1]
+        lr_pred = (lr_prob >= 0.5).astype(int)
+        lr_row = eval_predictions(y_va, lr_pred, lr_prob, f'LogReg_fold_{held_out}')
+        all_rows.append(lr_row)
+        lr_probs_all.append(lr_prob)
+        lr_labs.append(y_va)
 
         # ── LSTM (optional) ──────────────────────────────────────────────────
         if train_dl:
             try:
-                lstm_model, lstm_prob = train_lstm_fold(Xs_tr, y_tr, Xs_va, y_va)
+                lstm_model, lstm_prob = train_lstm_fold(Xs_tr, y_tr, Xs_va, y_va,
+                                                        epochs=8)
                 lstm_pred = (lstm_prob >= 0.5).astype(int)
                 all_rows.append(eval_predictions(y_va, lstm_pred, lstm_prob,
                                                   f'LSTM_fold_{held_out}'))
@@ -248,19 +273,21 @@ def run_loso_cv(X, X_seq, y, groups, feat_names, train_dl=True):
             except Exception as e:
                 warnings.warn(f'LSTM fold {held_out} failed: {e}')
 
-        print(f'  Fold {held_out}: XGB recall={all_rows[-1]["recall"]:.2f}  '
-              f'RF recall={all_rows[-2]["recall"]:.2f}')
+        print(f'  Fold {held_out}: XGB recall={xgb_row["recall"]:.2f}  '
+              f'RF recall={rf_row["recall"]:.2f}  '
+              f'LogReg recall={lr_row["recall"]:.2f}')
 
     return (all_rows,
             (xgb_probs_all, xgb_labs),
             (rf_probs_all, rf_labs),
-            (lstm_probs_all, lstm_labs))
+            (lstm_probs_all, lstm_labs),
+            (lr_probs_all, lr_labs))
 
 
 # ── Final model training ──────────────────────────────────────────────────────
 
 def train_final_models(X, X_seq, y, feat_names, best_xgb_t, best_rf_t,
-                       train_dl=True):
+                       best_lr_t=0.5, train_dl=True):
     """Train on full dataset and save models."""
     os.makedirs('models', exist_ok=True)
 
@@ -294,6 +321,15 @@ def train_final_models(X, X_seq, y, feat_names, best_xgb_t, best_rf_t,
     rf_path = 'models/fall_detector_rf.pkl'
     joblib.dump(rf_model, rf_path)
     print(f'Saved Random Forest -> {rf_path}  (threshold={best_rf_t:.2f})')  # smoke-test fix: ASCII for cp1252
+
+    # Logistic Regression (linear baseline; scaler bundled in the pipeline)
+    lr_model = _build_logreg()
+    lr_model.fit(X, y)
+    lr_model._fall_threshold = best_lr_t
+    lr_model._feature_names  = feat_names
+    lr_path = 'models/fall_detector_logreg.pkl'
+    joblib.dump(lr_model, lr_path)
+    print(f'Saved LogReg -> {lr_path}  (threshold={best_lr_t:.2f})')  # smoke-test fix: ASCII for cp1252
 
     # LSTM
     if train_dl:
@@ -388,7 +424,7 @@ def main():
 
     # LOSO-CV
     print(f'\nRunning LOSO-CV ({len(set(groups))} sessions)...')
-    rows, xgb_cv, rf_cv, lstm_cv = run_loso_cv(
+    rows, xgb_cv, rf_cv, lstm_cv, lr_cv = run_loso_cv(
         X, X_seq, y, groups, feat_names, train_dl=train_dl
     )
 
@@ -396,13 +432,15 @@ def main():
     best_xgb_t  = threshold_from_cv(*xgb_cv)  if xgb_cv[0]  else 0.5
     best_rf_t   = threshold_from_cv(*rf_cv)    if rf_cv[0]   else 0.5
     best_lstm_t = threshold_from_cv(*lstm_cv)  if lstm_cv[0] else 0.5
+    best_lr_t   = threshold_from_cv(*lr_cv)    if lr_cv[0]   else 0.5
 
     print(f'\nOptimal thresholds (F2): XGBoost={best_xgb_t:.2f}  '
-          f'RF={best_rf_t:.2f}  LSTM={best_lstm_t:.2f}')
+          f'RF={best_rf_t:.2f}  LogReg={best_lr_t:.2f}  LSTM={best_lstm_t:.2f}')
 
     # Print summaries
     print_summary(rows, 'XGBoost')
     print_summary(rows, 'RF')
+    print_summary(rows, 'LogReg')
     if train_dl:
         print_summary(rows, 'LSTM')
 
@@ -415,7 +453,7 @@ def main():
     # Save thresholds
     thresholds = {
         'xgb': best_xgb_t, 'rf': best_rf_t,
-        'lstm': best_lstm_t,
+        'logreg': best_lr_t, 'lstm': best_lstm_t,
         'window_size': args.window, 'stride': args.stride,
         'feat_names': feat_names,
     }
@@ -425,7 +463,7 @@ def main():
     # Train and save final models
     print('\nTraining final models on full dataset...')
     train_final_models(X, X_seq, y, feat_names, best_xgb_t, best_rf_t,
-                       train_dl=train_dl)
+                       best_lr_t=best_lr_t, train_dl=train_dl)
     print('\nDone.')
 
 

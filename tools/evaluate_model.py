@@ -54,6 +54,7 @@ MODEL_COLORS = {
     'XGBoost': '#e74c3c',
     'RF':      '#2ecc71',
     'LSTM':    '#3498db',
+    'LogReg':  '#9b59b6',
     'Rule':    '#f39c12',
 }
 
@@ -293,7 +294,7 @@ def main():
 
     # LOSO-CV
     print('\nRunning LOSO-CV...')
-    rows, xgb_cv, rf_cv, lstm_cv = run_loso_cv(
+    rows, xgb_cv, rf_cv, lstm_cv, lr_cv = run_loso_cv(
         X, X_seq, y, groups, feat_names, train_dl=train_dl
     )
 
@@ -304,6 +305,7 @@ def main():
     all_cv_rows = {
         'XGBoost': filter_rows('XGBoost'),
         'RF':      filter_rows('RF'),
+        'LogReg':  filter_rows('LogReg'),
     }
     if train_dl and filter_rows('LSTM'):
         all_cv_rows['LSTM'] = filter_rows('LSTM')
@@ -313,6 +315,8 @@ def main():
     xgb_prob  = np.concatenate(xgb_cv[0]) if xgb_cv[0] else np.array([])
     rf_true   = np.concatenate(rf_cv[1])  if rf_cv[1]  else np.array([])
     rf_prob   = np.concatenate(rf_cv[0])  if rf_cv[0]  else np.array([])
+    lr_true   = np.concatenate(lr_cv[1])  if lr_cv[1]  else np.array([])
+    lr_prob   = np.concatenate(lr_cv[0])  if lr_cv[0]  else np.array([])
 
     roc_data = {}
     pr_data  = {}
@@ -334,6 +338,19 @@ def main():
         roc_data['RF'] = (rf_true, rf_prob)
         pr_data['RF']  = (rf_true, rf_prob)
         cm_data['RF']  = (rf_true, rf_pred)
+        all_cv_rows['RF_aggregate'] = [
+            eval_predictions(rf_true, rf_pred, rf_prob, 'RF_agg')
+        ]
+
+    if len(lr_true):
+        best_lr_t = threshold_from_cv(lr_cv[0], lr_cv[1])
+        lr_pred   = (lr_prob >= best_lr_t).astype(int)
+        roc_data['LogReg'] = (lr_true, lr_prob)
+        pr_data['LogReg']  = (lr_true, lr_prob)
+        cm_data['LogReg']  = (lr_true, lr_pred)
+        all_cv_rows['LogReg_aggregate'] = [
+            eval_predictions(lr_true, lr_pred, lr_prob, 'LogReg_agg')
+        ]
 
     if train_dl and lstm_cv[1]:
         lstm_true = np.concatenate(lstm_cv[1])
