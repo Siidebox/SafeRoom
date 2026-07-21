@@ -8,8 +8,12 @@ Generates:
   - ROC curves overlaid for all methods
   - Precision-Recall curves overlaid
   - XGBoost feature importance bar chart
-  - Detection latency histogram
   - LaTeX-ready metrics table (optional)
+
+Note: this tool works on window-level cross-validation data and cannot
+produce detection latency, which is an event-level metric. Latency analysis
+(and the latency histogram) lives in tools/analyze_replay.py, which derives
+it from event-level replay results.
 
 Usage:
     # Evaluate trained models (runs LOSO-CV internally):

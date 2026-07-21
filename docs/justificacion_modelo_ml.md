@@ -70,6 +70,38 @@ Lo segundo escala; lo primero no.
   desplegable en Raspberry Pi sin GPU. LSTM/CNN están implementados como
   opción futura cuando crezca el dataset.
 
+## Limitación del dataset y trabajo futuro
+
+### Limitación: dataset de un solo sujeto → validez de LOSO
+
+El dataset etiquetado (123 sesiones, ~28 eventos de caída / ~173 ventanas de
+caída, con fuerte desbalance de clases) se grabó **con un único sujeto**
+(`guillermo`). La validación cruzada es **Leave-One-Session-Out (LOSO) a nivel
+de sesión, no a nivel de sujeto**. Con una sola persona, en cada *fold* el
+modelo entrena y evalúa sobre la firma de radar de la misma persona, por lo que:
+
+- no se puede demostrar **independencia del sujeto**: el modelo podría estar
+  aprendiendo el cuerpo, la marcha y la dinámica de caída *concretos* de un
+  individuo en lugar de la estructura estadística de una caída en general;
+- las métricas reportadas (recall agrupado 0.757, 0 falsos positivos en replay)
+  deben leerse como **potencialmente optimistas** respecto a la generalización
+  inter-persona. Son válidas dentro de las condiciones de calibración, pero no
+  prueban transferencia a personas no vistas.
+
+Esto es honestidad metodológica esperable en la defensa: el tribunal
+razonablemente señalará que LOSO a nivel de sesión no equivale a LOSO a nivel de
+sujeto.
+
+### Trabajo futuro: LOSO a nivel de sujeto
+
+La vía concreta para cerrar esta brecha es **grabar 1–2 sujetos adicionales**
+(preferiblemente con complexiones y patrones de movimiento distintos) siguiendo
+el mismo protocolo de captura y etiquetado. Con ≥2 sujetos se puede aplicar
+**LOSO a nivel de sujeto** (dejar fuera a una persona completa en cada *fold*) y
+así validar de forma directa la generalización inter-persona. Solo entonces las
+métricas podrán interpretarse como estimación de rendimiento sobre personas no
+vistas, y no únicamente sobre sesiones no vistas del mismo sujeto.
+
 ## Referencias en el código
 
 - Detector por reglas: `tools/radar_reader.py` → clase `FallDetector`.
