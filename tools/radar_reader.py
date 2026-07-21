@@ -1150,9 +1150,12 @@ class RadarWindow:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _emit_fall_event(notifier, event_type: str, track: dict, t_mono_ns: int,
-                     cr, reason: str) -> None:
-    """Send the IR-fused fall decision to the dashboard AND append to
-    logs/fall_events.jsonl for offline thesis evaluation."""
+                     cr, reason: str, source: str = 'radar') -> None:
+    """Send the fall/faint decision to the dashboard AND append to
+    logs/fall_events.jsonl for offline thesis evaluation.
+
+    `source` distinguishes the rule-based radar path ('radar') from the
+    independent ML detector ('radar_ml') on the dashboard."""
     payload = {
         'tid': int(track.get('tid', -1)),
         'x': float(track.get('x', 0.0)),
@@ -1172,7 +1175,7 @@ def _emit_fall_event(notifier, event_type: str, track: dict, t_mono_ns: int,
         payload['ir_frames_used'] = cr.frames_used
 
     if notifier is not None:
-        notifier.event(event_type, track_id=payload['tid'], **payload)
+        notifier.event(event_type, track_id=payload['tid'], source=source, **payload)
 
     # Append to JSONL for thesis comparison
     os.makedirs('logs', exist_ok=True)
@@ -1277,13 +1280,16 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                         _emit_fall_event(notifier, decision_event, t,
                                          frame['t_mono_ns'], cr, reason)
                     else:
-                        # No confirmer in play — keep emitting only legacy fall_fast.
-                        pass
+                        # No confirmer in play — emit legacy single-tier fall_fast.
+                        _emit_fall_event(notifier, 'fall_fast', t,
+                                         frame['t_mono_ns'], None, 'rule tier-1')
                 if is_faint:
                     faint_tids.add(tid)
                     faint_count += 1
                     print(f'\n*** FAINT DETECTED — Track {tid} at '
                           f'({t["x"]:.2f}, {t["y"]:.2f}, {t["z"]:.2f}) m ***\n')
+                    _emit_fall_event(notifier, 'faint', t,
+                                     frame['t_mono_ns'], None, 'faint tier-2')
 
                 # ML detector (runs alongside rule-based, independent)
                 if ml_detector is not None and h is not None:
@@ -1294,6 +1300,9 @@ def _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                         ml_fall_count += 1
                         print(f'\n[ML] FALL DETECTED — Track {tid} '
                               f'(p={prob_ml:.2f})\n')
+                        _emit_fall_event(notifier, 'fall_confirmed', t,
+                                         frame['t_mono_ns'], None,
+                                         f'ml p={prob_ml:.2f}', source='radar_ml')
 
             fall_detector.cleanup_old_tracks(active_tids)
             if ml_detector is not None:
@@ -1368,6 +1377,12 @@ def main():
     parser.add_argument('--ml-model', default=None, metavar='PATH',
                         help='Path to trained ML fall detector (.pkl or .pt). '
                              'Runs alongside rule-based detector when provided.')
+    # Dashboard integration
+    parser.add_argument('--dashboard', default=None, metavar='URL',
+                        help='Dashboard base URL (e.g. http://localhost:8000) to POST '
+                             'fall/faint events to. Rule-based falls -> fall_fast/'
+                             'fall_confirmed/fall_failopen/fall_candidate; ML falls -> '
+                             'fall_confirmed (source=radar_ml). Offline if omitted.')
     # IR live view (MLX90640)
     parser.add_argument('--ir', action='store_true',
                         help='Add live MLX90640 thermal panel to the visualizer '
@@ -1439,6 +1454,16 @@ def main():
                 ml_detector = MlFallDetector(args.ml_model)
             except Exception as e:
                 print(f'[WARN] Could not load ML model: {e}')
+
+    # Dashboard notifier (optional, non-blocking; drops events if server offline)
+    notifier = None
+    if args.dashboard:
+        try:
+            from saferoom_notifier import Notifier
+            notifier = Notifier(args.dashboard)
+            print(f'[dashboard] posting fall/faint events to {args.dashboard}')
+        except Exception as e:
+            print(f'[WARN] Could not init dashboard notifier: {e}')
 
     import queue
     frame_queue = queue.Queue(maxsize=4)
@@ -1512,7 +1537,7 @@ def main():
                 'z_offset': args.z_offset,
                 'confirmer': confirmer if args.ir else None,
                 'no_confirmer': args.no_confirmer,
-                'notifier': None,
+                'notifier': notifier,
             },
             daemon=True,
         )
@@ -1529,16 +1554,20 @@ def main():
                     ir_cap.stop_and_collect()
                 except Exception:
                     pass
+            if notifier is not None:
+                notifier.shutdown()
     else:
         try:
             _read_loop(reader, fall_detector, logger, frame_queue, stop_event,
                        args.sensor_height, args.sensor_tilt, False,
                        ml_detector=ml_detector, z_offset=args.z_offset,
                        confirmer=None, no_confirmer=args.no_confirmer,
-                       notifier=None)
+                       notifier=notifier)
         finally:
             data_ser.close()
             logger.close()
+            if notifier is not None:
+                notifier.shutdown()
 
 
 if __name__ == '__main__':

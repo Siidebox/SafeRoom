@@ -39,11 +39,12 @@ class Notifier:
         self.t = threading.Thread(target=self._worker, daemon=True, name="saferoom-notifier")
         self.t.start()
 
-    def event(self, type_: str, track_id: int | None = None, **details: Any) -> None:
+    def event(self, type_: str, track_id: int | None = None,
+              source: str | None = None, **details: Any) -> None:
         payload = {
             "type": type_,
             "timestamp": time.time(),
-            "source": self.source,
+            "source": source or self.source,
             "track_id": track_id,
             "details": {k: _scalar(v) for k, v in details.items()},
         }
