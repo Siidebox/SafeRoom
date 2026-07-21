@@ -92,16 +92,23 @@ cd ~/SafeRoom
   --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
   --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
   --ml-model models/fall_detector_xgb.pkl \
-  --dashboard http://localhost:8000
+  --dashboard http://localhost:8000 \
+  --ir --ir-rotate 90
 ```
+
+Este comando incluye `--ir` para enviar la **térmica** al dashboard (panel
+«Live thermal» en Ver sala). Si no tienes el MLX90640 conectado, quita
+`--ir --ir-rotate 90`.
 
 Al arrancar debe imprimir:
 
 ```
 [dashboard] posting fall/faint events to http://localhost:8000
+[IR] capture active @ 16 Hz, rotation 90° → dashboard
 ```
 
-Si no aparece esa línea, el flag `--dashboard` no se pasó → revísalo.
+(La segunda línea solo con `--ir`.) Si no aparece la primera, el flag
+`--dashboard` no se pasó → revísalo.
 
 ### Variantes
 
