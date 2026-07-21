@@ -13,6 +13,13 @@ Asume que estás en la Pi (usuario `guillermo`), repo en `~/SafeRoom`.
 
 ## 0. Requisitos previos
 
+- [ ] **Repo actualizado** en la Pi (incluye la vista 2D de la sala y el estado
+      presencia/fps en vivo del dashboard):
+
+      ```bash
+      cd ~/SafeRoom && git pull
+      ```
+
 - [ ] Modelo entrenado presente: `~/SafeRoom/models/fall_detector_xgb.pkl`
       (si no, ver [05-train-eval.md](05-train-eval.md)).
 - [ ] Radar IWR6843AOPEVM conectado y flasheado. Aparecen `/dev/ttyUSB0`
@@ -37,6 +44,20 @@ Deja la terminal abierta (`Ctrl+C` para parar).
 Abre en el navegador:
 - Desde la Pi: <http://localhost:8000/>
 - Desde otro dispositivo: <http://piSafeRoom.local:8000/> o la IP Tailscale.
+
+### Qué muestra el dashboard ahora
+
+- **Estado en vivo (tarjeta superior):** cicla *Sin presencia → Todo en orden
+  (presencia) → Caída detectada → Caída confirmada (IR) → Alerta de
+  inmovilidad*. Al detectar caída pulsa **Confirmar** para reconocerla.
+- **Tarjeta RADAR:** FPS reales y `online` mientras `radar_reader.py` esté
+  enviando (heartbeat ~2 Hz). Si ves `0.0 fps`/`offline`, el radar no está
+  publicando (ver [§5](#5-problemas-frecuentes)).
+- **Botón «Ver sala»** (cabecera): abre un **plano 2D cenital** con el contorno
+  de la habitación (según `boundaryBox` del cfg), el sensor (triángulo) y un
+  punto por persona seguida, con su TID. El punto **se mueve en tiempo real** y
+  se pone **rojo** si hay una caída activa. Muévete por la sala para verlo.
+- **Actividad reciente:** historial de eventos coloreado por tipo.
 
 ### Telegram (opcional)
 
@@ -144,6 +165,8 @@ Para reconocer/limpiar la alerta activa en el dashboard usa el botón de la UI
 |---|---|
 | No sale `[dashboard] posting ...` | Falta `--dashboard URL` en el comando. |
 | Radar arranca pero el dashboard no recibe nada | ¿Dashboard arrancado en Terminal 1? Prueba `curl http://localhost:8000/state`. El notifier descarta eventos si el server está caído (no bloquea el radar). |
+| RADAR muestra `0.0 fps` / `offline` con el radar corriendo | El heartbeat de posiciones no llega. Confirma que `radar_reader.py` va con `--dashboard` y que hay tracks (si nadie está en la sala no se envían posiciones). |
+| «Ver sala» dice *Esperando posiciones…* o sin punto | Aún no hay track activo (entra en la zona cubierta) o el `boundaryBox` no está en el cfg. El punto solo aparece con una persona seguida. |
 | `[WARN] Could not init dashboard notifier` | URL mal formada. Usa `http://localhost:8000` (sin barra final). |
 | `Could not load ML model` | Ruta del `.pkl` incorrecta o ejecutaste fuera de `~/SafeRoom`. Corre desde la raíz del repo. |
 | No aparecen `/dev/ttyUSB*` | Recablear USB, `dmesg | tail`, pulsar RST. |
