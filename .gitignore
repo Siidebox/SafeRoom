@@ -1,5 +1,6 @@
 # --- Python ---
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -80,6 +81,8 @@ models/
 
 # --- Recorded sessions (data; reproducible from sensors or synth_session.py) ---
 sessions/
+sessions_calib/
+sessions_excluidas/
 
 # --- Local-only secrets / credentials (never committed) ---
 .local/

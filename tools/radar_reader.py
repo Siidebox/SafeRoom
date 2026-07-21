@@ -1378,10 +1378,10 @@ def main():
     parser.add_argument('--ir-hz', type=int, default=16,
                         choices=[1, 2, 4, 8, 16, 32],
                         help='MLX90640 refresh rate in Hz (default: 16)')
-    parser.add_argument('--ir-rotate', type=int, default=270,
+    parser.add_argument('--ir-rotate', type=int, default=90,
                         choices=[0, 90, 180, 270],
                         help='Rotate IR frame N degrees CCW before display '
-                             '(default: 270, matches current mount). Use for '
+                             '(default: 90, matches current mount). Use for '
                              'physically tilted cameras.')
     args = parser.parse_args()
 

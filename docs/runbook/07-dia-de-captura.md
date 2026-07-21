@@ -33,9 +33,11 @@ df -h ~/SafeRoom         # comprueba espacio libre: un día (~3.5 h con IR) ocup
    desplazado **1.30 m desde la esquina** (no centrado) — lado estrecho
    (1.30 m) a la izquierda del radar, lado ancho (2.40 m) a la derecha. El
    `boundaryBox` del `.cfg` ya refleja esta asimetría en X (−1.30 / +2.40).
-2. MLX90640 junto al radar, FOV alineado. Montaje actual: **270°**, que ya es
+2. MLX90640 junto al radar, FOV alineado. Montaje actual: **90°**, que ya es
    el valor por defecto de `--ir-rotate` en live y en replay (se puede omitir
-   el flag). Si cambias el montaje físico, **anota la nueva rotación**
+   el flag). Verificado visualmente sobre las sesiones del 2026-07-21 (la
+   persona queda bien colocada con `--ir-rotate 90`). Si cambias el montaje
+   físico, **anota la nueva rotación**
    (0/90/180/270°) y pásala explícitamente con `--ir-rotate` en ambos
    comandos — deben coincidir, porque el confirmador IR se calibra en
    coordenadas post-rotación.
@@ -95,11 +97,11 @@ etiquetas son post-hoc), pero revisa que la caída fue franca.
 ```bash
 ~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --duration 60 --ir-hz 16 --name calib_b1 --subject none --notes "calibracion IR bloque 1"
 ```
-
+/home/guillermo/SafeRoom/sessions/20260720_104243_calib_b1
 Validarla en el momento:
 
 ```bash
-~/SafeRoom/.venv/bin/python -c "import sys; sys.path.insert(0,'tools'); from replay_session import load_background_from_session as l; l('sessions/<calib_b1_id>'); print('calib OK')"
+~/SafeRoom/.venv/bin/python -c "import sys; sys.path.insert(0,'tools'); from replay_session import load_background_from_session as l; l('sessions/20260720_104243_calib_b1'); print('calib OK')"
 ```
 
 Si da error (alguien estaba dentro), regrábala. **Listo para grabar.**
@@ -304,7 +306,7 @@ replay offline pareado sobre las mismas sesiones, con métricas de evento
 (recall/evento, falsas alarmas/hora, latencia):
 
 ```powershell
-python tools\replay_session.py sessions\*_<sujeto>_* --ml-model models\fall_detector_xgb.pkl --ir-calib sessions\<calib_b1_id> --ir-rotate 270 --json figures\replay_results.json
+python tools\replay_session.py sessions\*_<sujeto>_* --ml-model models\fall_detector_xgb.pkl --ir-calib sessions\<calib_b1_id> --ir-rotate 90 --json figures\replay_results.json
 ```
 
 > El glob es `sessions\*_<sujeto>_*` (no `sessions\<sujeto>_*`): los directorios
