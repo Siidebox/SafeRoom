@@ -53,11 +53,17 @@ Abre en el navegador:
 - **Tarjeta RADAR:** FPS reales y `online` mientras `radar_reader.py` esté
   enviando (heartbeat ~2 Hz). Si ves `0.0 fps`/`offline`, el radar no está
   publicando (ver [§5](#5-problemas-frecuentes)).
-- **Botón «Ver sala»** (cabecera): abre un **plano 2D cenital** con el contorno
-  de la habitación (según `boundaryBox` del cfg), el sensor (triángulo) y un
-  punto por persona seguida, con su TID. El punto **se mueve en tiempo real** y
-  se pone **rojo** si hay una caída activa. Muévete por la sala para verlo.
-- **Actividad reciente:** historial de eventos coloreado por tipo.
+- **Botón «Ver sala»** (cabecera): abre un modal con **dos paneles**:
+  - **Plano 2D cenital** con el contorno de la habitación (según `boundaryBox`
+    del cfg), el sensor (triángulo) y un punto por persona seguida, con su TID.
+    El punto **se mueve en tiempo real** y se pone **rojo** si hay una caída
+    activa. Muévete por la sala para verlo.
+  - **Térmica en vivo** (MLX90640): solo aparece si arrancaste el radar con
+    `--ir` (ver [§2](#2-arrancar-el-radar-con-modelo--dashboard-terminal-2)).
+    Sin `--ir` el panel queda en *Esperando primer frame…*.
+- **Actividad reciente:** historial de eventos coloreado por tipo. El botón
+  **«Borrar»** (arriba a la derecha de la lista) vacía el historial de forma
+  permanente (pide confirmación; no afecta al estado de presencia/alerta).
 
 ### Telegram (opcional)
 
@@ -100,9 +106,14 @@ Si no aparece esa línea, el flag `--dashboard` no se pasó → revísalo.
 ### Variantes
 
 - **Con visualizador** (añade ventana 2D):  añade `--plot`.
-- **Con fusión IR** (confirmador MLX90640): añade `--plot --ir`. La fusión IR
-  **solo funciona con `--plot`** (en modo headless el confirmer está desactivado
-  por diseño). Recuerda `--ir-rotate 90` si el montaje lo requiere.
+- **Con térmica en el dashboard** (panel «Live thermal» en Ver sala): añade
+  `--ir`. Funciona **también headless** (sin `--plot`): la térmica se reenvía al
+  dashboard a ~8 Hz. Recuerda `--ir-rotate 90` si el montaje lo requiere. Al
+  arrancar debe imprimir `[IR] capture active @ 16 Hz ... → dashboard`.
+- **Con fusión IR** (confirmador MLX90640): añade `--plot --ir`. La **fusión**
+  IR (confirmar/vetar caídas) **solo funciona con `--plot`** (en headless el
+  confirmer está desactivado por diseño); `--ir` a secas sí envía la térmica al
+  dashboard pero no hace fusión.
 - **Sin dashboard** (offline, como antes): quita `--dashboard`. Sigue
   imprimiendo en consola y registrando en `logs/fall_events.jsonl`.
 
@@ -157,6 +168,11 @@ También quedan persistidos:
 Para reconocer/limpiar la alerta activa en el dashboard usa el botón de la UI
 (o `curl -X POST http://localhost:8000/ack_alert`).
 
+Para **borrar el historial** de actividad usa el botón «Borrar» de la lista
+(o `curl -X POST http://localhost:8000/events/clear`). Esto vacía la tabla
+`events` de `dashboard.db` de forma permanente; no afecta a `presence` ni a la
+alerta activa.
+
 ---
 
 ## 5. Problemas frecuentes
@@ -167,6 +183,7 @@ Para reconocer/limpiar la alerta activa en el dashboard usa el botón de la UI
 | Radar arranca pero el dashboard no recibe nada | ¿Dashboard arrancado en Terminal 1? Prueba `curl http://localhost:8000/state`. El notifier descarta eventos si el server está caído (no bloquea el radar). |
 | RADAR muestra `0.0 fps` / `offline` con el radar corriendo | El heartbeat de posiciones no llega. Confirma que `radar_reader.py` va con `--dashboard` y que hay tracks (si nadie está en la sala no se envían posiciones). |
 | «Ver sala» dice *Esperando posiciones…* o sin punto | Aún no hay track activo (entra en la zona cubierta) o el `boundaryBox` no está en el cfg. El punto solo aparece con una persona seguida. |
+| Panel «Live thermal» vacío (*Esperando primer frame…*) | Arrancaste sin `--ir`, o el MLX90640 no responde. Comprueba la línea `[IR] capture active ... → dashboard` al arrancar; si no sale, revisa el I2C del MLX. |
 | `[WARN] Could not init dashboard notifier` | URL mal formada. Usa `http://localhost:8000` (sin barra final). |
 | `Could not load ML model` | Ruta del `.pkl` incorrecta o ejecutaste fuera de `~/SafeRoom`. Corre desde la raíz del repo. |
 | No aparecen `/dev/ttyUSB*` | Recablear USB, `dmesg | tail`, pulsar RST. |
