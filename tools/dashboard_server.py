@@ -42,6 +42,8 @@ DB_PATH = ROOT / "dashboard.db"
 TEMPLATES_DIR = Path(__file__).parent / "dashboard"
 TG_TOKEN = os.environ.get("SAFEROOM_TG_TOKEN", "").strip()
 TG_CHAT_ID = os.environ.get("SAFEROOM_TG_CHAT_ID", "").strip()
+# Historical set of critical fall/faint types. The live notify decision now
+# lives in telegram_text() (which also handles presence transitions).
 TG_CRITICAL_TYPES = {"fall_fast", "faint", "fall_confirmed", "fall_failopen"}
 SENSOR_TIMEOUT_S = 10.0
 
@@ -168,6 +170,24 @@ class State:
 state = State()
 
 
+def telegram_text(ev: EventIn) -> str | None:
+    """Short Telegram string for an event, or None if it should not notify.
+
+    Falls collapse to one word, faint to another; presence transitions get a
+    calmer icon. Everything else (incl. IR-vetoed fall_candidate) is silent.
+    """
+    hhmmss = time.strftime("%H:%M:%S", time.localtime(ev.timestamp))
+    if ev.type in ("fall_fast", "fall_confirmed", "fall_failopen"):
+        return f"🚨 FALL detected at {hhmmss}"
+    if ev.type == "faint":
+        return f"🆘 FAINT detected at {hhmmss}"
+    if ev.type == "presence":
+        return f"🟢 Presence detected at {hhmmss}"
+    if ev.type == "presence_lost":
+        return f"⚪ Room empty — no presence at {hhmmss}"
+    return None
+
+
 async def telegram_send(text: str) -> None:
     if not TG_TOKEN or not TG_CHAT_ID:
         return
@@ -228,12 +248,9 @@ async def post_event(ev: EventIn, request: Request):
             "details": ev.details,
         }
     # fall_candidate intentionally does NOT set active_alert (log only).
-    if ev.type in TG_CRITICAL_TYPES:
-        await telegram_send(
-            f"🚨 <b>{ev.type.upper()}</b> detected at "
-            f"{time.strftime('%H:%M:%S', time.localtime(ev.timestamp))}\n"
-            f"details: <code>{json.dumps(ev.details)}</code>"
-        )
+    tg_text = telegram_text(ev)
+    if tg_text:
+        await telegram_send(tg_text)
 
     await state.broadcast({"kind": "event", "event": ev.model_dump(), "state": state.snapshot()})
     return {"ok": True}
