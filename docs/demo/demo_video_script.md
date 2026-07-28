@@ -43,8 +43,7 @@ Work through this top to bottom. Everything must be green before the first take.
 - [ ] **Terminal 1 — dashboard:**
 
   ```bash
-  export SAFEROOM_TG_TOKEN=<token>
-  export SAFEROOM_TG_CHAT_ID=<chat-id>
+  source ~/SafeRoom/.local/telegram.env      # exports token + chat-id (gitignored)
   ~/saferoom_cam/bin/python ~/SafeRoom/tools/dashboard_server.py
   ```
 
@@ -151,18 +150,34 @@ In the JSON reply, find `"chat":{"id":123456789,...}` — that number is your
 `SAFEROOM_TG_CHAT_ID`. (If the reply is empty, send the bot another message
 and re-run.)
 
-**Step 3 — configure the dashboard.** In the terminal where you launch the
-dashboard, **before** launching it:
+> **Already done for this bot.** The chat id is `1298100567` and both values
+> are stored in `.local/telegram.env` (gitignored). You only need to repeat
+> Step 2 if the chat id ever changes.
+
+**Step 3 — configure the dashboard.** Credentials live in a gitignored file,
+`.local/telegram.env`. Because `.local/` is never committed, `git pull` does
+**not** create it on the Pi — create it once, on the Pi, with the two lines:
 
 ```bash
-export SAFEROOM_TG_TOKEN=1234567890:AAF...xyz
-export SAFEROOM_TG_CHAT_ID=123456789
+mkdir -p ~/SafeRoom/.local
+cat > ~/SafeRoom/.local/telegram.env <<'EOF'
+export SAFEROOM_TG_TOKEN=<paste-bot-token>
+export SAFEROOM_TG_CHAT_ID=1298100567
+EOF
+```
+
+Then, in the terminal where you launch the dashboard, **before** launching it:
+
+```bash
+source ~/SafeRoom/.local/telegram.env
 ~/saferoom_cam/bin/python ~/SafeRoom/tools/dashboard_server.py
 ```
 
 Startup must print `telegram alerts: enabled`, and the phone immediately
 receives *"SafeRoom dashboard online."* — that alone proves the bridge works.
-To make it permanent, append the two `export` lines to `~/.bashrc` on the Pi.
+To make it permanent, append `source ~/SafeRoom/.local/telegram.env` to
+`~/.bashrc` on the Pi. Keep the token private — do not commit it, do not show
+it on camera.
 
 **Step 4 — dry-run an alert without the radar.** With the dashboard running:
 
