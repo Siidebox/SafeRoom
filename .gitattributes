@@ -1,0 +1,24 @@
+# Normalize line endings in the repository; check out native on each platform.
+* text=auto
+
+# Source files always LF in the repo.
+*.py      text eol=lf
+*.md      text eol=lf
+*.toml    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.html    text eol=lf
+*.cfg     text eol=lf
+*.scad    text eol=lf
+*.c       text eol=lf
+*.h       text eol=lf
+*.cmd     text eol=lf
+*.projectspec text eol=lf
+
+# Binary — never touch.
+*.bin     binary
+*.pkl     binary
+*.png     binary
+*.jpg     binary
+*.stl     binary

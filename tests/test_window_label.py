@@ -13,7 +13,7 @@ Decisions (2026-07-08, pre-dataset):
 import pandas as pd
 import pytest
 
-from feature_engineering import _window_label
+from saferoom.ml.features import _window_label
 
 
 def _win(labels):
@@ -49,6 +49,6 @@ class TestWindowLabel:
 
 class TestLabelerVocabulary:
     def test_fall_lying_key_exists(self):
-        from label_session_multimodal import KEY_TO_LABEL, LABEL_COLORS
+        from saferoom.dataset.labeling_multimodal import KEY_TO_LABEL, LABEL_COLORS
         assert 'fall_lying' in KEY_TO_LABEL.values()
         assert 'fall_lying' in LABEL_COLORS

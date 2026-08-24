@@ -1,234 +1,240 @@
-# SafeRoom — Protocolo de recogida de datos
+# Data collection protocol
 
-Versión: 1.1 (2026-07-08). Para uso una vez que la caja v2 esté montada con
-el radar IWR6843AOPEVM y la cámara MLX90640 conectados a la Raspberry Pi 5.
+Version 1.1 (2026-07-08). For use once the v2 enclosure is assembled, with the
+IWR6843AOPEVM radar and the MLX90640 thermal camera connected to the
+Raspberry Pi 5.
 
-Cambios v1.1: se añade el **protocolo mínimo viable** (1 sujeto, 1 día) como
-objetivo del primer día de captura, sesiones negativas no guionizadas con
-confusores, sesiones de escenario continuo, y la etiqueta `fall_lying`
-(ver `labeling_protocol.md` v1.1). El reparto completo v1.0 pasa a ser el
-objetivo extendido si hay más días/sujetos.
+Changes in v1.1: adds the **minimum viable protocol** (one subject, one day) as
+the target for the first capture day, unscripted negative sessions with
+confounders, continuous-scenario sessions, and the `fall_lying` label (see
+`labeling_protocol.md` v1.1). The full v1.0 breakdown becomes the extended
+target if more days or subjects become available.
 
-## Protocolo mínimo viable (primer día, 1 sujeto)
+## Goal
 
-Subconjunto suficiente para un capítulo de resultados honesto. Prioridad de
-mayor a menor — si el día se acorta, cortar desde abajo:
+Produce a labelled, **time-synchronized multimodal** dataset (radar + IR) good
+enough to train and rigorously evaluate the fall detection model. The primary
+model is radar-only; IR is always recorded as visual ground truth and as a
+secondary baseline.
 
-| Prioridad | Clase | Repeticiones | Notas |
+## Minimum viable protocol (first day, one subject)
+
+Enough for an honest results chapter. Listed highest priority first; if the day
+runs short, cut from the bottom.
+
+| Priority | Class | Repetitions | Notes |
 |---|---|---|---|
-| 1 | `fall` | 25–30 | 4 orientaciones (frontal, lateral izq/dcha, atrás), ≥ 3 posiciones. Colchoneta. |
-| 2 | **negativos no guionizados** | 2 sesiones × 15–30 min | Ver abajo. Sin guion, con confusores. |
+| 1 | `fall` | 25-30 | 4 orientations (front, left, right, backward), at least 3 positions. Use a crash mat. |
+| 2 | **unscripted negatives** | 2 sessions x 15-30 min | See below. No script, with confounders. |
 | 3 | `near_fall` | 15 | |
-| 4 | `sit` | 20 | Mitad silla, mitad suelo. |
-| 5 | `walk` | 15–20 | Incluir trayectorias perpendiculares al beam. |
+| 4 | `sit` | 20 | Half on a chair, half on the floor. |
+| 5 | `walk` | 15-20 | Include trajectories perpendicular to the beam. |
 | 6 | `lie` | 10 | |
 | 7 | `stand` | 10 | |
-| 8 | `none` | 2 × 100 s | |
-| 9 | **escenario continuo** | 2 sesiones × ~5 min | Ver abajo. |
+| 8 | `none` | 2 x 100 s | |
+| 9 | **continuous scenario** | 2 sessions x ~5 min | See below. |
 
-**Sesiones negativas no guionizadas (prioridad 2).** Vida normal en la
-habitación SIN caídas, incluyendo deliberadamente confusores que pueden
-disparar falsos positivos del radar: dejar caer una mochila/objeto pesado,
-agacharse a recoger algo del suelo, sentarse bruscamente, abrir/cerrar la
-puerta, mover una silla, estirarse en el suelo a por algo bajo un mueble.
-Son las sesiones que dan potencia estadística a la métrica de falsas
-alarmas/hora y al estudio de fusión radar+IR — sin ellas, con solo
-actividades guionizadas cortas, el radar puede dar 0 FPs y la comparación
-queda vacía. Etiquetarlas con sus clases normales (`walk`, `sit`, `none`...).
+**Unscripted negative sessions (priority 2).** Ordinary life in the room with no
+falls, deliberately including confounders that can trigger radar false
+positives: dropping a backpack or other heavy object, crouching to pick
+something off the floor, sitting down abruptly, opening and closing the door,
+moving a chair, stretching out on the floor to reach under furniture.
 
-**Sesiones de escenario continuo (prioridad 9).** Secuencia mixta en una sola
-sesión: entrar → caminar → estar de pie → sentarse → caminar → caída →
-permanecer en el suelo ≥ 10 s → levantarse → salir. Sirven como conjunto de
-validación realista: en el resto del dataset cada sesión contiene una sola
-clase, y los folds LOSO degeneran (el fold de `fall` casi no tiene negativos).
+These sessions are what give statistical power to the false-alarms-per-hour
+metric and to the radar+IR fusion study. Without them, with only short scripted
+activities, the radar can score zero false positives and the comparison says
+nothing. Label them with their ordinary classes (`walk`, `sit`, `none`, ...).
 
-**Sesgo de sujeto único.** Con 1 sujeto, la validación es
-leave-one-session-out, no leave-one-subject-out: las claims de generalización
-se limitan a "sesiones no vistas del mismo sujeto y entorno". Registrar el
-sesgo en `manifest.notes` y en la sección de limitaciones del TFM. El segundo
-sujeto (más adelante) repetirá los bloques 1–5 reducidos a la mitad.
+**Continuous-scenario sessions (priority 9).** One session containing a mixed
+sequence: enter, walk, stand, sit, walk, fall, stay on the floor for at least
+10 s, get up, leave. These serve as a realistic validation set. Everywhere else
+in the dataset each session holds a single class, which makes the LOSO folds
+degenerate: the `fall` fold has almost no negatives.
 
-## Objetivo
+**Single-subject bias.** With one subject, validation is leave-one-session-out,
+not leave-one-subject-out, so generalization claims are limited to "unseen
+sessions from the same subject and environment". Record the bias in
+`manifest.notes` and in the limitations section. A second subject would repeat
+blocks 1-5 at half the repetitions.
 
-Generar un dataset etiquetado, **multimodal sincronizado** (radar + IR), que
-permita entrenar y evaluar de forma rigurosa el modelo de detección de caídas
-del TFM. El modelo principal es radar-only; la IR se graba siempre como
-ground-truth visual y como baseline secundaria.
+## Physical setup
 
-## Setup físico
-
-| Elemento | Valor objetivo | Notas |
+| Item | Target | Notes |
 |---|---|---|
-| Altura sensor | 2.04 m | Coincide con `sensorPosition` del `.cfg` activo |
-| Tilt | 10° hacia abajo | Validado el 2026-04-20 |
-| Habitación | 5.10 × 3.7 m | `boundaryBox` del `.cfg` (X asimétrico: sensor a 1.30 m de la esquina) |
-| Suelo | Limpio, sin clutter > 0.5 m | Evita reflectores estáticos |
-| MLX90640 | Junto al radar, FOV alineado | Confirmar 16 Hz refresh |
-| Iluminación | Indiferente (IR) | Para vídeo de referencia conviene luz natural |
+| Sensor height | 2.04 m | Must match `sensorPosition` in the active `.cfg` |
+| Tilt | 10 deg downward | Validated 2026-04-20 |
+| Room | 5.10 x 3.7 m | `boundaryBox` in the `.cfg`; X is asymmetric, sensor 1.30 m from the corner |
+| Floor | Clear, no clutter above 0.5 m | Avoids static reflectors |
+| MLX90640 | Beside the radar, FOV aligned | Confirm 16 Hz refresh |
+| Lighting | Irrelevant for IR | Natural light helps if shooting reference video |
 
-Antes de grabar:
-- Pi alimentada y arrancada.
-- `sensorStop` enviado y `flushCfg`. Cada sesión envía su `.cfg` al inicio.
-- Comprobación rápida con `python tools/session_recorder.py --duration 10
-  --name precheck`. Verifica `radar.fps_real ≥ 19.5`, `thermal.fps_real ≥ 7.5`.
+Before recording: the Pi is powered and booted, `sensorStop` and `flushCfg` have
+been sent (each session sends its own `.cfg` at the start), and a quick check
+has been run with `saferoom-record --duration 10 --name precheck`, confirming
+`radar.fps_real >= 19.5` and `thermal.fps_real >= 7.5`.
 
-## Estructura de salida
+## Output layout
 
-Cada sesión produce un directorio:
+Each session produces one directory:
 
 ```
-sessions/<YYYYMMDD_HHMMSS>_<sujeto>_<actividad>/
-├── radar.csv      (MlCsvLogger, 35 columnas, incluye t_mono_ns)
-├── thermal.npz    (MLX90640 24×32 float32 + t_mono_ns + t_wall)
-└── manifest.json  (metadatos + LabelSpans tras etiquetado)
+sessions/<YYYYMMDD_HHMMSS>_<subject>_<activity>/
+├── radar.csv      # MlCsvLogger, 35 columns, includes t_mono_ns
+├── thermal.npz    # MLX90640 24x32 float32 + t_mono_ns + t_wall
+└── manifest.json  # metadata, plus LabelSpans after labelling
 ```
 
-## Clases y reparto objetivo
+## Extended class targets
 
-Mínimos antes de considerar el dataset entrenable.
+Minimums before the dataset can be considered trainable.
 
-| Clase | Definición operativa | Repeticiones objetivo |
+| Class | Operational definition | Target repetitions |
 |---|---|---|
-| `fall` | Caída completa desde de pie hasta suelo, sin volver a levantarse en ≥ 3 s. Frontal, lateral izquierda, lateral derecha, hacia atrás (~25% cada una). | 60 |
-| `near_fall` | Tropiezo / pérdida de equilibrio recuperada antes de tocar suelo. | 30 |
-| `sit` | Sentarse controladamente en suelo o silla. | 60 |
-| `lie` | Tumbarse voluntariamente (cama / colchoneta). | 30 |
-| `walk` | Caminar por la habitación, distintas direcciones. | 60 |
-| `stand` | De pie quieto en distintas posiciones. | 30 |
-| `none` | Habitación vacía. | 600 s acumulados (~6 sesiones × 100 s) |
+| `fall` | Full fall from standing to the floor, not getting up for at least 3 s. Front, left, right, backward, roughly 25 % each. | 60 |
+| `near_fall` | Trip or loss of balance recovered before touching the floor. | 30 |
+| `sit` | Sitting down under control, on the floor or a chair. | 60 |
+| `lie` | Voluntarily lying down, on a bed or mat. | 30 |
+| `walk` | Walking around the room in various directions. | 60 |
+| `stand` | Standing still in various positions. | 30 |
+| `none` | Empty room. | 600 s total (about 6 sessions x 100 s) |
 
-Total estimado: ~35 min de actividad + ~10 min vacía = **45 min** netos.
+Estimated total: ~35 min of activity plus ~10 min empty room, so **45 min** net.
 
-## Variación obligatoria
+## Required variation
 
-Para que el modelo generalice, cada clase debe cubrir:
+For the model to generalize, each class must span:
 
-- **Posición** en la habitación: ≥ 4 puntos (esquinas + centro).
-- **Orientación** respecto al radar: 0°, 45°, 90°, 135°, 180°.
-- **Sujetos**: idealmente ≥ 2 personas (alturas / complexiones distintas).
-- **Ropa**: al menos una ropa "absorbente" (algodón grueso) y una "reflectiva"
-  (sintético / chaqueta).
-- **Hora del día**: ≥ 2 momentos distintos (la IR es sensible a temperatura
-  ambiente y luz solar).
+- **Position** in the room: at least 4 points (corners plus centre).
+- **Orientation** relative to the radar: 0, 45, 90, 135 and 180 degrees.
+- **Subjects**: ideally 2 or more, with different heights and builds.
+- **Clothing**: at least one absorbent outfit (thick cotton) and one reflective
+  one (synthetic, jacket).
+- **Time of day**: at least 2 different times. IR is sensitive to ambient
+  temperature and sunlight.
 
-Si no hay ≥ 2 sujetos disponibles, registrar este sesgo en `manifest.notes`
-de cada sesión y mencionarlo en la sección de limitaciones del TFM.
+If two subjects are not available, record that bias in each session's
+`manifest.notes` and in the limitations section.
 
-## Procedimiento por sesión
+## Per-session procedure
 
-Sesión = una grabación continua de **una sola actividad** (no mezclar clases
-en la misma sesión salvo pruebas específicas).
+A session is one continuous recording of **a single activity**. Do not mix
+classes in one session except for the specific continuous-scenario tests.
 
-1. **Decidir** clase, sujeto, posición, orientación.
-2. **Iniciar**:
-   ```
-   python tools/session_recorder.py \
+1. **Decide** class, subject, position, orientation.
+
+2. **Start recording:**
+
+   ```bash
+   saferoom-record \
      --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
      --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
      --duration 30 --ir-hz 16 \
-     --name <sujeto>_<actividad>_<posicion> \
-     --subject <sujeto> \
-     --notes "<orientacion>,<ropa>,<hora>"
-   ```
-   `session_recorder.py` solo graba — **no calibra la IR** (eso lo hace el
-   `IrConfirmer` en modo live). Para el análisis offline, la calibración
-   térmica sale de una **sesión `calib` dedicada**: al inicio de cada bloque
-   de grabación (~1 h), graba 60 s con la habitación **vacía**:
-   ```
-   python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
-     --cfg ... --duration 60 --ir-hz 16 --name calib_bloqueN --subject none \
-     --notes "calibracion IR bloque N"
-   ```
-   Después, `replay_session.py --ir-calib sessions/<calib_id>` construye el
-   fondo térmico desde ella. Si alguien estuvo en la habitación durante la
-   calib, el replay la rechazará con un error claro — regrabarla. El resto
-   de sesiones NO necesitan empezar con la habitación vacía.
-3. **Ejecutar** la acción siguiendo los tiempos del cronograma:
-   - Caídas: empezar de pie 5 s, ejecutar, **permanecer tumbado ≥ 8 s**
-     (el `fall_lying` debe cubrir los 5 s de ventana del IR confirmer).
-   - Near_fall: empezar de pie 5 s, ejecutar el tropiezo, recuperarse.
-   - Sit / lie: de pie 3 s → sentarse / tumbarse → quieto 10 s.
-   - Walk: caminar continuo 30 s.
-   - Stand: quieto en posición; cambiar posición cada 10 s entre sesiones.
-   - None: nadie en la habitación durante toda la sesión.
-4. **Verificar** al terminar: el script imprime `radar.fps_real` y `thermal.fps_real`.
-   Repetir si:
-   - `radar.fps_real < 19.5`,
-   - `thermal.fps_real < 7.5`,
-   - `radar.drops > 1% × frames`,
-   - `thermal.bad_frames > 1% × frames`.
-5. **Etiquetar** después (no en caliente):
-   ```
-   python tools/label_session_multimodal.py sessions/<id>/
+     --name <subject>_<activity>_<position> \
+     --subject <subject> \
+     --notes "<orientation>,<clothing>,<time>"
    ```
 
-## Cronograma sugerido (día de captura, protocolo mínimo viable)
+   `saferoom-record` only records; it does **not** calibrate the IR. That is
+   done live by `IrConfirmer`. For offline analysis the thermal background comes
+   from a dedicated `calib` session: at the start of each recording block
+   (roughly 1 h), record 60 s with the room **empty**:
 
-Cada bloque empieza con una **sesión `calib` de 60 s con la habitación
-vacía** (fondo térmico para `replay_session.py --ir-calib`).
+   ```bash
+   saferoom-record --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
+     --cfg ... --duration 60 --ir-hz 16 --name calib_blockN --subject none \
+     --notes "IR calibration, block N"
+   ```
 
-| Bloque | Duración | Contenido |
+   Then `saferoom-replay --ir-calib sessions/<calib_id>` builds the thermal
+   background from it. If anyone was in the room during calibration, replay
+   rejects it with a clear error and it must be re-recorded. Ordinary sessions
+   do **not** need to start with an empty room.
+
+3. **Perform** the action following these timings:
+   - Falls: stand for 5 s, execute, then **stay down for at least 8 s** so that
+     `fall_lying` covers the IR confirmer's 5 s window.
+   - Near-falls: stand for 5 s, execute the stumble, recover.
+   - Sit / lie: stand 3 s, sit or lie down, stay still 10 s.
+   - Walk: walk continuously for 30 s.
+   - Stand: stand still; change position every 10 s between sessions.
+   - None: nobody in the room for the whole session.
+
+4. **Verify.** The recorder prints `radar.fps_real` and `thermal.fps_real`.
+   Re-record if `radar.fps_real < 19.5`, `thermal.fps_real < 7.5`,
+   `radar.drops > 1 %` of frames, or `thermal.bad_frames > 1 %` of frames.
+
+5. **Label afterwards**, not during the session:
+
+   ```bash
+   saferoom-label-mm sessions/<id>/
+   ```
+
+## Suggested capture-day schedule
+
+Each block starts with a **60 s `calib` session in an empty room**, providing
+the thermal background for `saferoom-replay --ir-calib`.
+
+| Block | Duration | Content |
 |---|---|---|
-| Setup + precheck | 45 min | Montaje sensor en posición (2.04 m, 10°), cableado a la Pi, smoke test (ver checklist abajo) |
-| Bloque 1 | 1 h | calib 60 s + 25–30 fall (4 orientaciones × ≥ 3 posiciones) |
-| Descanso | 15 min | |
-| Bloque 2 | 30–45 min | calib 60 s + negativos no guionizados (1ª sesión larga con confusores) |
-| Bloque 3 | 30 min | calib 60 s + 15 near_fall + 20 sit |
-| Bloque 4 | 30 min | 15–20 walk + 10 lie + 10 stand + 2 × none 100 s |
-| Bloque 5 | 30 min | calib 60 s + 2ª sesión negativa + 2 escenarios continuos |
-| Etiquetado | 1–2 h | Todas las sesiones del día (puede ser otro día) |
+| Setup + precheck | 45 min | Mount the sensor (2.04 m, 10 deg), cable to the Pi, smoke test |
+| Block 1 | 1 h | calib 60 s, then 25-30 falls (4 orientations x at least 3 positions) |
+| Break | 15 min | |
+| Block 2 | 30-45 min | calib 60 s, then the first long unscripted negative session |
+| Block 3 | 30 min | calib 60 s, then 15 near_fall and 20 sit |
+| Block 4 | 30 min | 15-20 walk, 10 lie, 10 stand, 2 x none 100 s |
+| Block 5 | 30 min | calib 60 s, second negative session, 2 continuous scenarios |
+| Labelling | 1-2 h | All of the day's sessions; can be a different day |
 
-Con un segundo sujeto (más adelante), repetir bloques 1–3 reducidos a la
-mitad otro día.
+With a second subject, repeat blocks 1-3 at half the repetitions on another day.
 
-## Checklist pre-captura (día de setup)
+## Pre-capture checklist
 
-1. Sensor montado a **2.04 m, tilt 10°**, misma posición que `sensorPosition`
-   del `.cfg` activo (esquina, tripode o soporte definitivo).
-2. MLX90640 junto al radar con FOV alineado; **anotar la rotación de
-   montaje** (0/90/180/270°) — debe pasarse igual en `radar_reader.py
-   --ir-rotate` (live) y en `replay_session.py --ir-rotate` (offline).
-3. Pi arrancada; radar en `/dev/ttyUSB0` (CLI) y `/dev/ttyUSB1` (datos).
-4. Smoke test: `python tools/session_recorder.py --duration 10 --name precheck`
-   → verificar `radar.fps_real ≥ 19.5` y `thermal.fps_real ≥ 7.5`.
-5. Verificación visual con `radar_reader.py --plot`: caminar por la
-   habitación y comprobar que el track sigue a la persona dentro del
-   `boundaryBox`; comprobar maxZ ≈ altura esperada de pie.
-6. Grabar la sesión `calib` del bloque 1 (60 s, habitación vacía) y
-   validarla en el momento:
+1. Sensor mounted at **2.04 m, 10 deg tilt**, in the same position as
+   `sensorPosition` in the active `.cfg`.
+2. MLX90640 beside the radar with FOV aligned. **Write down the mounting
+   rotation** (0/90/180/270 deg); the same value must be passed to
+   `saferoom-read --ir-rotate` live and `saferoom-replay --ir-rotate` offline.
+3. Pi booted, radar on `/dev/ttyUSB0` (CLI) and `/dev/ttyUSB1` (data).
+4. Smoke test: `saferoom-record --duration 10 --name precheck`, confirming
+   `radar.fps_real >= 19.5` and `thermal.fps_real >= 7.5`.
+5. Visual check with `saferoom-read --plot`: walk around and confirm the track
+   follows the person inside the `boundaryBox`, and that `maxZ` is close to the
+   expected standing height.
+6. Record block 1's `calib` session (60 s, empty room) and validate it on the
+   spot:
+
+   ```bash
+   python -c "from saferoom.evaluation.replay import load_background_from_session as l; l('sessions/<calib_id>'); print('calib OK')"
    ```
-   python -c "import sys; sys.path.insert(0,'tools'); from replay_session import load_background_from_session as l; l('sessions/<calib_id>'); print('calib OK')"
-   ```
-   Si alguien estaba en la habitación, dará error con el motivo — regrabar.
-7. Ensayo de 1 caída sobre colchoneta con `--plot`: confirmar que Tier-1
-   dispara (o anotar si no, para revisar umbral).
-8. Colchoneta colocada; consentimiento informado del sujeto firmado
-   (aunque sea el propio autor, dejar constancia escrita para el TFM).
 
-## Calidad mínima del dataset
+   If someone was in the room it fails with the reason. Re-record.
+7. Rehearse one fall onto the mat with `--plot` and confirm Tier 1 fires, or
+   note that it did not so the threshold can be reviewed.
+8. Crash mat in place; informed consent signed by the subject. Even when the
+   subject is the author, keep a written record.
 
-Después de etiquetar, comprobar:
+## Minimum dataset quality
 
-- Cada clase tiene ≥ las repeticiones objetivo arriba.
-- Ninguna sesión es la única instancia de su clase para un sujeto dado
-  (necesario para LOSO-CV con generalización inter-sujeto).
-- Distribución de duraciones (en `manifest.duration_s`) sin outliers
-  extremos: ninguna < 5 s para fall.
+After labelling, check that:
 
-Si todo OK, comprometer con `git`:
+- Every class meets the target repetitions above.
+- No session is the only instance of its class for a given subject, which is
+  required for LOSO-CV with cross-subject generalization.
+- The duration distribution (`manifest.duration_s`) has no extreme outliers,
+  and no fall session is shorter than 5 s.
 
-```
-git add sessions/<id>/
-git commit -m "data: <sujeto> session <YYYYMMDD>, +N falls / +M sit / ..."
-```
+Recorded sessions are not committed to this repository (`sessions/` is
+gitignored); keep them in the project's data store, and never publish video
+without consent. The default outputs are CSV and NPZ only.
 
-(No subir vídeos a remoto sin consentimiento. Por defecto sólo CSV + npz.)
+## Limitations to carry into the write-up
 
-## Limitaciones conocidas a documentar en el TFM
+- Lateral movement perpendicular to the beam produces low Doppler.
+- `maxZ - minZ` is the cluster's vertical extent, not the person's stature.
+- IR does not label anything automatically. Labelling remains manual and depends
+  on the operator's judgement (see `labeling_protocol.md`).
+- 16 Hz IR gives about 8 effective fps through subpaging, so IR temporal
+  resolution is roughly 125 ms.
+- Without genuine subject diversity, the models will overfit to the operator.
 
-- Movimiento lateral perpendicular al beam → bajo Doppler.
-- `maxZ − minZ` es extensión del cluster, no estatura.
-- IR no etiqueta automáticamente: la etiqueta sigue siendo manual y depende
-  del criterio del operador (ver `labeling_protocol.md`).
-- 16 Hz IR → ~8 fps efectivos (subpaging) → resolución temporal IR ≈ 125 ms.
-- Sin diversidad real de sujetos los modelos sobreajustarán al operador.
+See [limitations.md](limitations.md) for the full list.

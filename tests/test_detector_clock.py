@@ -4,8 +4,8 @@ time instead of wall time."""
 import joblib
 import numpy as np
 
-from radar_reader import FallDetector
-from ml_inference import MlFallDetector
+from saferoom.ml.inference import MlFallDetector
+from saferoom.radar.detector import FallDetector
 
 
 class FakeClock:

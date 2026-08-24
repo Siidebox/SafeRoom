@@ -10,12 +10,12 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from OCP.STEPControl import STEPControl_Reader
-from OCP.IFSelect import IFSelect_RetDone
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopAbs import TopAbs_SOLID
 from OCP.Bnd import Bnd_Box
 from OCP.BRepBndLib import BRepBndLib
+from OCP.IFSelect import IFSelect_RetDone
+from OCP.STEPControl import STEPControl_Reader
+from OCP.TopAbs import TopAbs_SOLID
+from OCP.TopExp import TopExp_Explorer
 
 STEP_PATH = Path(r"C:/Users/sideb/chicago/IIT/tfm/SafeRoom/measures/PROC091G.step")
 OUT_CSV = Path(r"C:/Users/sideb/chicago/IIT/tfm/SafeRoom/hardware/solids.csv")

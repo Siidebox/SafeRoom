@@ -25,7 +25,7 @@ The demo runs the **radar-only ML detector** — the primary contribution of the
 > English UI strings used to read "FALL CONFIRMED (IR)". Since this demo runs
 > no IR fusion, the "(IR)" suffix was removed from the two English strings
 > (`status_alert_fall_confirmed` / `ev_fall_confirmed` in
-> `tools/dashboard/index.html`) — **applied 2026-07-23**. The Spanish strings
+> `saferoom/dashboard/static/index.html`) — **applied 2026-07-23**. The Spanish strings
 > keep "(IR)"; record with the UI in English. Remember to `git pull` on the
 > Pi before recording day so it serves the updated UI.
 
@@ -44,17 +44,17 @@ Work through this top to bottom. Everything must be green before the first take.
 
   ```bash
   source ~/SafeRoom/.local/telegram.env      # exports token + chat-id (gitignored)
-  ~/saferoom_cam/bin/python ~/SafeRoom/tools/dashboard_server.py
+  saferoom-dashboard
   ```
 
-  Expect: `SafeRoom dashboard ready — db=/home/guillermo/SafeRoom/dashboard.db`
+  Expect: `SafeRoom dashboard ready — db=<repo>/dashboard.db`
   and `telegram alerts: enabled`. Your phone receives *"SafeRoom dashboard online."*
 
 - [ ] **Terminal 2 — radar** (from the repo root; press RST first):
 
   ```bash
   cd ~/SafeRoom
-  .venv/bin/python tools/radar_reader.py \
+  saferoom-read \
     --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
     --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
     --ml-model models/fall_detector_xgb.pkl \
@@ -150,7 +150,7 @@ In the JSON reply, find `"chat":{"id":123456789,...}` — that number is your
 `SAFEROOM_TG_CHAT_ID`. (If the reply is empty, send the bot another message
 and re-run.)
 
-> **Already done for this bot.** The chat id is `1298100567` and both values
+> **Already done for this bot.** The chat id is `<chat-id>` and both values
 > are stored in `.local/telegram.env` (gitignored). You only need to repeat
 > Step 2 if the chat id ever changes.
 
@@ -162,7 +162,7 @@ and re-run.)
 mkdir -p ~/SafeRoom/.local
 cat > ~/SafeRoom/.local/telegram.env <<'EOF'
 export SAFEROOM_TG_TOKEN=<paste-bot-token>
-export SAFEROOM_TG_CHAT_ID=1298100567
+export SAFEROOM_TG_CHAT_ID=<chat-id>
 EOF
 ```
 
@@ -170,7 +170,7 @@ Then, in the terminal where you launch the dashboard, **before** launching it:
 
 ```bash
 source ~/SafeRoom/.local/telegram.env
-~/saferoom_cam/bin/python ~/SafeRoom/tools/dashboard_server.py
+saferoom-dashboard
 ```
 
 Startup must print `telegram alerts: enabled`, and the phone immediately
@@ -493,15 +493,15 @@ re-edit the narration:
 |---|---|
 | Room 5.10 × 3.70 m; sensor at 2.04 m, 10° tilt | `SafeRoom_1p9m_4x6m.cfg`, CLAUDE.md |
 | 20 fps frame rate | `frameCfg` 50 ms |
-| Rules: vz ≤ −1.15 m/s for 3 frames (Tier 1) | `radar_reader.py` FallDetector |
-| Immobility: floor level (maxZ < 0.80 m), stable, 30 s (Tier 2) | `radar_reader.py` FallDetector |
+| Rules: vz ≤ −1.15 m/s for 3 frames (Tier 1) | `saferoom.radar.detector.FallDetector` |
+| Immobility: floor level (maxZ < 0.80 m), stable, 30 s (Tier 2) | `saferoom.radar.detector.FallDetector` |
 | ML: 30-frame (1.5 s) window, 36 features, XGBoost | `feature_engineering.py`, `ml_inference.py` |
 | Dataset: 123 sessions, 28 fall events, single subject | thesis report / CLAUDE.md |
 | LOSO window-level: recall 0.76, precision 0.63 | thesis results |
 | Replay: 28/28 falls, 0 false alarms, median latency 0.3 s (in-sample) | thesis results |
 | Rules baseline: ~10.5 false alarms/hour, missed 4/13 lateral falls | thesis results |
 | Thermal fusion = rejected negative result; demo runs `--ir` headless (no fusion) | thesis results, runbook 09 |
-| Telegram fires only for `fall_confirmed`, `fall_fast`, `fall_failopen`, `faint` | `dashboard_server.py` `TG_CRITICAL_TYPES` |
+| Telegram fires only for `fall_confirmed`, `fall_fast`, `fall_failopen`, `faint` | `saferoom.dashboard.server` `TG_CRITICAL_TYPES` |
 | ML event = `fall_confirmed`, source `radar_ml` | runbook 09 §3 |
 
 > **Before recording:** the rows sourced "thesis results" (10.5 FA/h, 0.63

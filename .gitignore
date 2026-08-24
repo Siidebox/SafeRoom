@@ -1,33 +1,58 @@
-# --- Python ---
-venv/
-.venv/
+# ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
 *.egg-info/
-dist/
+.eggs/
 build/
+dist/
+.venv*/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
-# --- IDE ---
+# ── IDE / OS ────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# --- Claude Code local config ---
-.claude/settings.local.json
-
-# --- System ---
 .DS_Store
 Thumbs.db
 
-# --- Captured data / sessions (large, not source) ---
-data/captures/
+# ── Claude Code ─────────────────────────────────────────────────────────────
+.claude/settings.local.json
+CLAUDE.md
+
+# ── Secrets ─────────────────────────────────────────────────────────────────
+.local/
+*.secret
+
+# ── Recorded data (reproducible from the sensors or saferoom-synth) ─────────
+sessions/
+sessions_calib/
+sessions_excluidas/
 logs/
-models/
+logs_migrated/
+figures/
+data/captures/
 *.csv
 
-# --- Office documents (presentations, drafts, meeting notes) ---
+# Trained artifacts: ignore new outputs, keep the two deployed files.
+models/
+!models/fall_detector_xgb.pkl
+!models/thresholds.json
+
+# ── Local working folders (dated deliverables, scratch, reference material) ─
+# Every dated folder at the repo root: 9-3/, 11-11/, 2026-07-21/, …
+/[0-9]*/
+/cosas_varias/
+/wmr/
+/doc/
+/measures/
+/referencias/
+/guides/
+
+# ── Binaries not tracked as source ──────────────────────────────────────────
 *.docx
 *.doc
 *.pptx
@@ -35,60 +60,19 @@ models/
 *.xlsx
 *.xls
 *.pdf
-
-# --- Videos / media (demos, recordings) ---
 *.mp4
 *.mov
 *.avi
 *.mkv
 *.webm
 *.gif
-
-# --- Large third-party reference material (kept locally, not in repo) ---
-doc/
-measures/
-referencias/
-guides/
-
-# --- Dated session / progress directories ---
-11-11/
-25-11/
-9-3/
-2026-04-16/
-2026-05-1/
-
-# --- Personal scratch folder ---
-cosas_varias/
-
-# --- Compressed source snapshots ---
 *.zip
 *.7z
 *.tar
 *.tar.gz
 *.rar
-
-# --- Allow firmware binary (the deliverable) ---
-!code/People_Tracking/3D_People_Tracking/prebuilt_binaries/*.bin
-
-# --- Hardware build outputs (regenerable from case.scad) ---
 *.stl
 *.3mf
 
-# --- ML smoke-test outputs (not committed) ---
-figures/
-logs_migrated/
-models/
-
-# --- Recorded sessions (data; reproducible from sensors or synth_session.py) ---
-sessions/
-sessions_calib/
-sessions_excluidas/
-
-# --- Local-only secrets / credentials (never committed) ---
-.local/
-*.secret
-
-# --- Semester deliverable folders (PDF/PPTX binaries, delivered separately) ---
-2026-06-9/
-2026-07-21/
-2026-07-22/
+# Firmware image is the deliverable — keep it.
+!code/People_Tracking/3D_People_Tracking/prebuilt_binaries/*.bin

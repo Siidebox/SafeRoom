@@ -1,11 +1,14 @@
-"""Unit tests for tools/ir_confirmer.py — synthetic frames only, no I2C."""
+"""Unit tests for saferoom.ir.confirmer — synthetic frames only, no I2C."""
 import numpy as np
-import pytest
 
-from ir_confirmer import (
-    ConfirmerResult,
+from saferoom.ir.confirmer import (
+    BackgroundModel,
+    IrConfirmer,
     IrConfirmerParams,
     IrRingBuffer,
+    blob_bbox,
+    blob_centroid,
+    blob_mask,
 )
 
 
@@ -55,8 +58,6 @@ def test_confirmer_params_defaults():
     assert p.safeguard_cluster_dt == 5.0
     assert p.safeguard_peak_dt == 8.0
 
-
-from ir_confirmer import BackgroundModel
 
 
 def _person_frame(base_temp: float = 22.0, person_temp: float = 34.0,
@@ -110,12 +111,6 @@ def test_background_model_safeguard_tolerates_single_noisy_pixel():
     assert bg.is_calibrated()
 
 
-from ir_confirmer import (
-    blob_mask,
-    blob_centroid,
-    blob_bbox,
-)
-
 
 def test_blob_mask_picks_pixels_above_bg_plus_sigma():
     bg_mean = np.full((24, 32), 22.0, dtype=np.float32)
@@ -157,8 +152,6 @@ def test_blob_bbox_returns_inclusive_extents():
     y0, y1, x0, x1 = blob_bbox(mask)
     assert (y0, y1, x0, x1) == (5, 8, 10, 13)
 
-
-from ir_confirmer import IrConfirmer
 
 
 def test_confirmer_starts_uncalibrated():

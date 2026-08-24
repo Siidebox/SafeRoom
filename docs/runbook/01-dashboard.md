@@ -1,42 +1,50 @@
-# Dashboard web
+# Web dashboard
 
-## Arrancar
+## Start
 
 ```bash
-~/saferoom_cam/bin/python ~/SafeRoom/tools/dashboard_server.py
+saferoom-dashboard
 ```
 
-Mantén la terminal abierta. `Ctrl+C` para parar.
+It prints `SafeRoom dashboard ready — db=<path>`. Keep the terminal open;
+`Ctrl+C` stops it. Use `--host` / `--port` to change the bind address.
 
-## Abrir en navegador
+## Open
 
-- Desde la propia Pi: <http://localhost:8000/>
-- Desde otro dispositivo en la red: <http://piSafeRoom.local:8000/> o
-  <http://100.110.129.108:8000/> (Tailscale).
+- On the host itself: <http://localhost:8000/>
+- From another device on the network: `http://<hostname>.local:8000/` or the
+  host's IP.
 
-## Telegram (opcional)
+## Telegram alerts (optional)
 
-Si quieres alertas de caída por Telegram, exporta las variables ANTES de
-arrancar el dashboard:
+Export the credentials **before** starting the dashboard:
 
 ```bash
-export SAFEROOM_TG_TOKEN=<token-del-bot>
+export SAFEROOM_TG_TOKEN=<bot-token>
 export SAFEROOM_TG_CHAT_ID=<chat-id>
-~/saferoom_cam/bin/python ~/SafeRoom/tools/dashboard_server.py
+saferoom-dashboard
 ```
 
-Solo `fall_confirmed`, `fall_failopen`, `fall_fast` y `faint` disparan
-Telegram. `fall_candidate` no.
+Only `fall_confirmed`, `fall_failopen`, `fall_fast` and `faint` send a Telegram
+message. `fall_candidate` does not, because it is log-only.
 
-## Persistencia
+Keep the token out of the repository. A gitignored `.local/telegram.env` that
+you `source` before starting is the usual arrangement.
 
-Todos los eventos se guardan en `~/SafeRoom/dashboard.db` (SQLite). El
-historial sobrevive a reinicios del dashboard.
+## Persistence
 
-## Borrar histórico (cuidado)
+Events are stored in `dashboard.db` (SQLite), so history survives restarts of
+the dashboard.
+
+## Clearing history
+
+The **Clear** button in the activity list empties the `events` table
+permanently, without touching presence or the active alert. The equivalent from
+a shell:
 
 ```bash
-rm ~/SafeRoom/dashboard.db
+curl -X POST http://localhost:8000/events/clear
 ```
 
-La próxima ejecución crea una base de datos nueva vacía.
+To start completely fresh, stop the dashboard and delete `dashboard.db`. The
+next run creates an empty one.

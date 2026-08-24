@@ -1,13 +1,9 @@
-pyserial>=3.5
-numpy>=1.24
-pandas>=2.0
-matplotlib>=3.7
-pytest>=7
-
-# Etiquetado y features (tools/label_session*.py, feature_engineering.py)
-# usan pandas (arriba).
-
-# Pipeline ML (tools/train_model.py, evaluate_model.py, ml_inference.py)
-xgboost>=2.0
-scikit-learn>=1.3
-joblib>=1.3
+# SafeRoom dependencies are declared in pyproject.toml.
+#
+#   pip install -e ".[viz,ml]"                 radar + visualizer + ML
+#   pip install -e ".[dashboard]"              monitoring dashboard
+#   pip install -e ".[dev]"                    pytest + ruff
+#   pip install -e ".[viz,ml,dashboard,dev]"   everything
+#
+# This file exists so that `pip install -r requirements.txt` still works.
+-e .[viz,ml]

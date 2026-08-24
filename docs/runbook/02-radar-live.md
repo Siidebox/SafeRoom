@@ -1,72 +1,71 @@
-# Live: radar + IR + confirmer
+# Live view: radar + IR + confirmer
 
-Vista en pantalla con los paneles 2D, 3D, IR y contador de caídas. El
-confirmer corre en el mismo proceso y emite `fall_confirmed` /
-`fall_failopen` / `fall_candidate` al dashboard.
+On-screen 2D, 3D and IR panels with a fall counter. The confirmer runs in the
+same process and emits `fall_confirmed`, `fall_failopen` or `fall_candidate` to
+the dashboard.
 
-## Requisitos previos
+## Prerequisites
 
-1. **Reset físico** del radar (botón RST en la EVM).
-2. (Opcional) Dashboard arrancado en otra terminal — ver
-   [01-dashboard.md](01-dashboard.md). Sin él el sistema sigue funcionando
-   pero los eventos solo van a `logs/fall_events.jsonl`.
-3. La habitación **vacía** los primeros 30 segundos (auto-calibración del IR).
+1. **Physical reset** of the radar (RST button on the EVM).
+2. Optionally, the dashboard running in another terminal, see
+   [01-dashboard.md](01-dashboard.md). Without it everything still works, but
+   events only reach `logs/fall_events.jsonl`.
+3. The room **empty** for the first 30 seconds, for IR auto-calibration.
 
-## Comando completo
+## Command
 
 ```bash
-cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/radar_reader.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --plot --plot3d --ir --ir-hz 16 --ir-rotate 90
+saferoom-read \
+  --cli /dev/ttyUSB0 --data /dev/ttyUSB1 \
+  --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg \
+  --plot --plot3d --ir --ir-hz 16 --ir-rotate 90
 ```
 
-**Tiene que ejecutarse desde la terminal del escritorio de la Pi** (no por
-SSH), porque abre una ventana Qt.
+This must run from a desktop terminal on the Pi, not over SSH, because it opens
+a Qt window.
 
-## Flags útiles
+## Useful flags
 
-| Flag | Para qué |
+| Flag | Purpose |
 |---|---|
-| `--plot` | Vista 2D (X-Y arriba, X-Z lateral) |
-| `--plot3d` | Añade el panel 3D OpenGL |
-| `--ir` | Panel IR + confirmer activo |
-| `--ir-hz 16` | Tasa de refresh del MLX90640 (8 fps efectivos) |
-| `--ir-rotate {0,90,180,270}` | Compensa la cámara torcida |
-| `--no-confirmer` | Desactiva el confirmer (solo `fall_fast` legacy). Útil para evaluación radar-only |
-| `--ml-model models/fall_detector_xgb.pkl` | Carga el modelo ML alongside el rule-based |
+| `--plot` | 2D view: X-Y on top, X-Z from the side |
+| `--plot3d` | Adds the OpenGL 3D panel |
+| `--ir` | IR panel plus active confirmer |
+| `--ir-hz 16` | MLX90640 refresh rate (about 8 effective fps) |
+| `--ir-rotate {0,90,180,270}` | Compensates for the camera's mounting rotation |
+| `--no-confirmer` | Disables the confirmer, leaving only rule-based `fall_fast`. Use for radar-only evaluation |
+| `--ml-model models/fall_detector_xgb.pkl` | Runs the trained model alongside the rules |
+| `--dashboard http://localhost:8000` | Posts events to the dashboard |
 
-## Qué esperar al arrancar
+## What you should see at startup
 
 ```
-[IR] live panel active @ 16 Hz, rotation 90°
+[IR] live panel active @ 16 Hz, rotation 90
 [IR] confirmer enabled — calibrating background...
 ```
 
-A los ~30 s la calibración termina. Si la habitación no estaba vacía:
+Calibration finishes after about 30 s. If the room was not empty:
 
 ```
 [IR] calibration aborted — hot pixels detected
 ```
 
-Sal de la habitación y espera 60 s — reintenta solo. Si insistes en entrar
-demasiado pronto, no calibra nunca; el confirmer se queda en `failopen` y
-toda caída tier-1 sale como `fall_failopen`.
+Leave the room and wait 60 s; it retries on its own. If you keep walking back
+in too early it never calibrates, the confirmer stays in `failopen`, and every
+Tier-1 fall is reported as `fall_failopen`.
 
-## Qué ves cuando hay una caída
+## What a fall looks like
 
-- Consola: `*** FALL DETECTED — Track N at (x, y, z) m ***`
-- A los pocos ms el confirmer decide: `fall_confirmed`, `fall_failopen` o
-  `fall_candidate`.
-- Dashboard pinta la fila con su color (rojo, rojo+badge, naranja).
-- `logs/fall_events.jsonl` recibe una línea con el payload completo
-  (decisión, confidence, qué reglas pasaron).
+- Console: `*** FALL DETECTED — Track N at (x, y, z) m ***`
+- Milliseconds later the confirmer decides: `fall_confirmed`, `fall_failopen`
+  or `fall_candidate`.
+- The dashboard shows the row in its colour: red, red with a badge, or orange.
+- `logs/fall_events.jsonl` gains a line with the full payload: the decision,
+  the confidence, and which rules passed.
 
-## Inspeccionar `logs/fall_events.jsonl`
-
-```bash
-tail -5 ~/SafeRoom/logs/fall_events.jsonl
-```
-
-O con jq si lo tienes:
+## Inspecting the event log
 
 ```bash
-tail -1 ~/SafeRoom/logs/fall_events.jsonl | python -m json.tool
+tail -5 logs/fall_events.jsonl
+tail -1 logs/fall_events.jsonl | python -m json.tool
 ```

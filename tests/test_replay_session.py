@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from replay_session import replay_rules, load_session, replay_session, fuse
-from event_metrics import Detection
-from ir_confirmer import ConfirmerResult
+from saferoom.evaluation.metrics import Detection
+from saferoom.evaluation.replay import fuse, load_session, replay_rules, replay_session
+from saferoom.ir.confirmer import ConfirmerResult
 
 NS = int(1e9)
 FRAME_S = 0.05  # 20 fps
@@ -129,16 +129,16 @@ class TestGtEventMerging:
         with open(os.path.join(session_dir, 'manifest.json'), 'w') as f:
             json.dump(manifest, f)
 
-        from replay_session import build_gt_events
-        from manifest_schema import Manifest
+        from saferoom.dataset.manifest import Manifest
+        from saferoom.evaluation.replay import build_gt_events
         events = build_gt_events(Manifest.load(session_dir))
         assert len(events) == 1
         assert events[0].t_start_mono_ns == int(5.0 * NS)
         assert events[0].t_end_mono_ns == int(9.5 * NS)
 
     def test_standalone_fall_not_extended(self, session_dir):
-        from replay_session import build_gt_events
-        from manifest_schema import Manifest
+        from saferoom.dataset.manifest import Manifest
+        from saferoom.evaluation.replay import build_gt_events
         events = build_gt_events(Manifest.load(session_dir))
         assert len(events) == 1
         assert events[0].t_end_mono_ns == int(110 * FRAME_S * NS)
@@ -215,18 +215,18 @@ def multimodal_session_dir(tmp_path):
 
 class TestIrCalib:
     def test_background_from_clean_calib_session(self, calib_dir):
-        from replay_session import load_background_from_session
+        from saferoom.evaluation.replay import load_background_from_session
         bg = load_background_from_session(calib_dir)
         assert bg.is_calibrated()
 
     def test_background_rejects_occupied_calib_session(self, hot_calib_dir):
-        from replay_session import load_background_from_session
+        from saferoom.evaluation.replay import load_background_from_session
         with pytest.raises(ValueError, match='hot'):
             load_background_from_session(hot_calib_dir)
 
     def test_confirmer_accepts_injected_background(self, calib_dir):
-        from replay_session import load_background_from_session
-        from ir_confirmer import IrConfirmer
+        from saferoom.evaluation.replay import load_background_from_session
+        from saferoom.ir.confirmer import IrConfirmer
         bg = load_background_from_session(calib_dir)
         c = IrConfirmer(background=bg)
         assert c.is_calibrated()

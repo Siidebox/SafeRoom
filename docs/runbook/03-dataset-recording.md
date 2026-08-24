@@ -1,38 +1,71 @@
-# Grabar sesiones para el dataset
+# Recording dataset sessions
 
-Comando puro de captura sincronizada radar + IR a una carpeta de sesión.
-Sin GUI, sin confirmer — solo datos crudos para etiquetar después.
+Synchronized radar + IR capture into a session directory. No GUI, no confirmer,
+just raw data to be labelled afterwards.
 
-## Antes
+The class targets, required variation and day schedule live in
+[data_collection_protocol.md](../data_collection_protocol.md). This page is the
+operational side: the commands, and how to tell a session is good.
 
-1. Reset físico del radar (botón RST).
-2. Al inicio de cada bloque (~1 h), graba una sesión `calib` de 60 s con la
-   habitación **vacía** — es el fondo térmico que usa
-   `replay_session.py --ir-calib`. Las demás sesiones no necesitan
-   habitación vacía al empezar (`session_recorder.py` solo graba, no
-   calibra).
+## Before starting
 
-## Sesión estándar (30 s)
+1. Physical reset of the radar (RST button).
+2. Confirm both ports exist: `/dev/ttyUSB0` (CLI) and `/dev/ttyUSB1` (data).
+3. Check free disk space. A full capture day with IR runs to several GB.
+4. At the start of each block (roughly 1 h), record a 60 s `calib` session with
+   the room **empty**. That is the thermal background used by
+   `saferoom-replay --ir-calib`. Ordinary sessions do not need an empty room;
+   `saferoom-record` only records, it never calibrates.
 
-```bash
-cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --duration 30 --ir-hz 16 --name <sujeto>_<actividad>_<posicion> --subject <sujeto> --notes "<orientacion>,<ropa>,<hora>"
-```
-
-Sustituye `<sujeto>`, `<actividad>`, `<posicion>`, etc. Ejemplo:
-
-```bash
-cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --duration 30 --ir-hz 16 --name guillermo_fall_centro --subject guillermo --notes "frontal,camiseta_algodon,tarde"
-```
-
-## Sesión larga sin IR (solo radar)
+Setting two shell variables saves repeating them:
 
 ```bash
-cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/session_recorder.py --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg --duration 60 --no-ir --name precheck_radar
+SUBJ=<subject-id>
+CFG=code/People_Tracking/3D_People_Tracking/chirp_configs/SafeRoom_1p9m_4x6m.cfg
 ```
 
-## Verificar la sesión grabada
+They live only in that terminal. Re-run them after reconnecting over SSH.
 
-Después del comando el script imprime:
+## Standard session (30 s)
+
+```bash
+saferoom-record \
+  --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg "$CFG" \
+  --duration 30 --ir-hz 16 \
+  --name "${SUBJ}_fall_centre" --subject "$SUBJ" \
+  --notes "front,cotton-shirt,afternoon"
+```
+
+`--name` should encode subject, activity and position; `--notes` should encode
+orientation, clothing and time of day. Vary both across repetitions.
+
+`--live-fall` is optional and informative: it runs the Tier-1 detector in the
+same process and prints when a fall registers (`vz <= -1.15 m/s`). It opens no
+window and barely affects the frame rate. Labels remain post-hoc either way, so
+a session counts whether or not the detector fires.
+
+## Block calibration session
+
+```bash
+saferoom-record \
+  --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg "$CFG" \
+  --duration 60 --ir-hz 16 \
+  --name calib_b1 --subject none --notes "IR calibration, block 1"
+```
+
+## Long radar-only session
+
+```bash
+saferoom-record \
+  --cli /dev/ttyUSB0 --data /dev/ttyUSB1 --cfg "$CFG" \
+  --duration 60 --no-ir --name precheck_radar
+```
+
+## Validation
+
+### A. Frame rates, after every session
+
+The recorder prints:
 
 ```
 [REC] Radar: 600 frames, 0 drops, 20.04 fps
@@ -40,34 +73,43 @@ Después del comando el script imprime:
 [REC] Manifest written: sessions/<id>/manifest.json
 ```
 
-Calidad mínima aceptable:
+The session is valid when:
+
 - `radar.fps_real >= 19.5`
 - `thermal.fps_real >= 7.5`
-- `radar.drops < 1% × frames`
-- `thermal.bad_frames < 1% × frames`
+- `radar.drops` under 1 % of frames
+- `thermal.bad_frames` under 1 % of frames
 
-Si no se cumple, **repite la sesión** (y revisa cableado / reset).
+Otherwise reset the radar and **re-record that session**. Also re-record any
+take where the action itself went wrong, such as a half-fall or a hesitation.
 
-## Comprobar sincronía radar↔IR
-
-```bash
-~/SafeRoom/.venv/bin/python tools/check_sync.py sessions/<id> --max-drift-ms 50
-```
-
-Verás drift entre eventos de movimiento detectados en ambos streams.
-Objetivo: `max |dt| <= 50 ms`.
-
-## Listado y limpieza
+### B. Calibration sessions, right after recording
 
 ```bash
-ls -lh ~/SafeRoom/sessions/
-rm -r ~/SafeRoom/sessions/<id>     # borrar una sesión concreta
+python -c "from saferoom.evaluation.replay import load_background_from_session as l; l('sessions/<calib_id>'); print('calib OK')"
 ```
 
-Las sesiones están en `.gitignore`, no se suben a git por defecto.
+`calib OK` means the background is usable. An error means someone, or something
+warm, was in the room. Re-record with the room empty.
 
-## Protocolo completo del día
+### C. Radar-IR synchronization, roughly every 10 sessions
 
-Lee `docs/data_collection_protocol.md` — clases, repartos objetivo (60 falls,
-60 sits, etc.), variación obligatoria de posición/orientación/sujeto/ropa,
-cronograma sugerido.
+```bash
+saferoom-check-sync sessions/<id> --max-drift-ms 50
+```
+
+This reports the drift between motion events detected in both streams. The
+target is `max |dt| <= 50 ms`.
+
+## Listing and cleanup
+
+```bash
+ls -lh sessions/
+rm -r sessions/<id>      # remove one session
+```
+
+Sessions are gitignored and never committed.
+
+Smoke-test and synthetic directories (`*_precheck`, `*_synccheck`, `synth_*`)
+are not dataset material. Move them out of `sessions/` before training, and keep
+`calib_*` separate as well, since it is background rather than labelled data.

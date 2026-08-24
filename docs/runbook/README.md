@@ -1,29 +1,38 @@
-# SafeRoom — Runbook
+# Runbook
 
-Comandos de operación rápida, agrupados por tarea. Todos asumen que estás en
-la Raspberry Pi (usuario `guillermo`) y que el repo vive en `~/SafeRoom`.
+Operational commands, grouped by task. They assume the package is installed
+(`pip install -e ".[viz,ml,dashboard]"`) and that you are in the repository
+root.
 
-| Tarea | Archivo |
+| Task | Guide |
 |---|---|
-| Lanzar el dashboard web | [01-dashboard.md](01-dashboard.md) |
-| Live: radar + IR + confirmer (vista en pantalla) | [02-radar-live.md](02-radar-live.md) |
-| Grabar sesiones para el dataset | [03-dataset-recording.md](03-dataset-recording.md) |
-| Etiquetar sesiones grabadas | [04-labeling.md](04-labeling.md) |
-| Entrenar y evaluar modelos | [05-train-eval.md](05-train-eval.md) |
-| Diagnóstico y mantenimiento | [06-troubleshooting.md](06-troubleshooting.md) |
-| **Día de captura del dataset (guía completa)** | [07-dia-de-captura.md](07-dia-de-captura.md) |
-| **Prueba en vivo: detector ML + dashboard** | [09-prueba-en-vivo.md](09-prueba-en-vivo.md) |
+| Start the web dashboard | [01-dashboard.md](01-dashboard.md) |
+| Live view: radar + IR + confirmer | [02-radar-live.md](02-radar-live.md) |
+| Record dataset sessions | [03-dataset-recording.md](03-dataset-recording.md) |
+| Label recorded sessions | [04-labeling.md](04-labeling.md) |
+| Train and evaluate models | [05-train-eval.md](05-train-eval.md) |
+| End-to-end live deployment test | [06-live-test.md](06-live-test.md) |
+| Diagnostics and maintenance | [07-troubleshooting.md](07-troubleshooting.md) |
+| Telegram alerts setup | [08-telegram-alerts.md](08-telegram-alerts.md) |
 
-## Antes de cualquier prueba con radar
+Background reading: [architecture](../architecture.md),
+[hardware and deployment](../hardware.md),
+[data collection protocol](../data_collection_protocol.md),
+[labelling protocol](../labeling_protocol.md).
 
-Pulsa el botón **RST** del IWR6843AOPEVM. El sensor a veces se queda en mal
-estado entre sesiones; este reset lo deja limpio.
+## Before any test with the radar
 
-## Dos venvs distintos en la Pi
+Press the **RST** button on the IWR6843AOPEVM. The sensor sometimes ends up in
+a bad state between sessions, and the reset clears it.
 
-| Venv | Uso |
-|---|---|
-| `~/SafeRoom/.venv` | Todo lo que es radar / ML / confirmer / pytest |
-| `~/saferoom_cam` | Solo el dashboard server (tiene `fastapi`, `httpx`) |
+## Two environments on the Raspberry Pi
 
-No los mezcles. Cada comando del runbook ya indica cuál usar.
+The dashboard needs FastAPI and httpx, the radar path does not. If you keep two
+virtualenvs on the Pi, install the matching extras in each:
+
+| Environment | Install | Used by |
+|---|---|---|
+| Radar / ML | `pip install -e ".[viz,ml]"` | `saferoom-read`, `saferoom-record`, training, tests |
+| Dashboard | `pip install -e ".[dashboard]"` | `saferoom-dashboard` |
+
+A single environment with `".[viz,ml,dashboard]"` works too and is simpler.

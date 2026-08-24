@@ -1,7 +1,7 @@
 """Tests for tools/event_metrics.py — window→event aggregation and metrics."""
 import pytest
 
-from event_metrics import GtEvent, Detection, match_events, compute_event_metrics
+from saferoom.evaluation.metrics import Detection, GtEvent, compute_event_metrics, match_events
 
 NS = int(1e9)
 

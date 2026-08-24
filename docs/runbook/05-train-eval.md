@@ -1,75 +1,71 @@
-# Entrenar y evaluar modelos
+# Training and evaluating models
 
-Asume que tienes >= 2 sesiones etiquetadas en `sessions/`. Para datos reales
-serias >= 30 sesiones de caída + variación.
+Assumes at least two labelled sessions in `sessions/`. For results worth
+reporting you want 30 or more fall sessions plus the required variation; see
+[data_collection_protocol.md](../data_collection_protocol.md).
 
-## Entrenar (XGBoost + Random Forest, opcional LSTM)
+## Train
 
 ```bash
-cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/train_model.py --data sessions/*/ --no-dl
+saferoom-train --data sessions/*/ --no-dl
 ```
 
-- `--data` acepta directorios de sesión (`sessions/<id>/`) o CSVs sueltos,
-  con globs.
-- `--no-dl` salta el LSTM (más rápido y sin necesidad de torch).
-- Quita `--no-dl` si quieres el LSTM también.
+- `--data` accepts session directories or loose CSVs, and supports globs.
+- `--no-dl` skips the LSTM, which is faster and does not need PyTorch. Drop the
+  flag to train it too.
 
-Salida:
+Outputs:
+
 - `models/fall_detector_xgb.pkl`
 - `models/fall_detector_rf.pkl`
-- `models/cv_results.csv` (métricas LOSO-CV)
+- `models/cv_results.csv` — LOSO-CV metrics
 
-## Evaluar y generar figuras
+Cross-validation is **Leave-One-Session-Out**. With a single-subject dataset
+that is not the same as leave-one-subject-out; see
+[limitations.md](../limitations.md).
+
+## Evaluate and generate figures
 
 ```bash
-cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/evaluate_model.py --data sessions/*/ --no-dl --outdir figures/eval --latex
+saferoom-evaluate --data sessions/*/ --no-dl --outdir figures/eval --latex
 ```
 
-Salida en `figures/eval/`:
+Writes to `figures/eval/`:
+
 - `confusion_matrices.png`
 - `roc_curves.png`
 - `pr_curves.png`
 - `feature_importance.png`
-- Tabla LaTeX por stdout (con `--latex`).
 
-## A_kinetic — fase 1 (¿la IR detecta caídas por sí sola?)
+`--latex` additionally prints a metrics table to stdout.
 
-```bash
-cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/explore_ir_kinetics.py sessions/ --out figures/ir_kinetics
-```
+## Compare rules vs ML vs fusion (offline replay)
 
-Para cada label-span calcula 4 features cinéticas IR
-(`centroid_vy_peak`, `bbox_height_drop`, `aspect_change_peak`,
-`temporal_grad_peak`) y dibuja sus curvas ROC.
-
-Decisión (criterio del spec):
-
-- Si **alguna** feature alcanza ROC AUC >= 0.7 → escribir spec separado
-  para `IrKineticDetector` (fase 2).
-- Si no → A_kinetic se descarta con justificación cuantitativa.
-
-## Comparar reglas vs ML vs fusión (para el TFM) — replay offline
-
-La comparación se hace **offline sobre las mismas sesiones grabadas** (no con
-runs live separados, que no serían un experimento pareado). El replay pasa
-`radar.csv` + `thermal.npz` por `FallDetector`, `MlFallDetector` e
-`IrConfirmer` con reloj de sesión y agrega las detecciones contra los
-LabelSpans del `manifest.json`:
+The comparison runs **offline over the same recorded sessions**, not as separate
+live runs, which would not be a paired experiment. Replay pushes `radar.csv`
+and `thermal.npz` through `FallDetector`, `MlFallDetector` and `IrConfirmer`
+with an injected session clock, then aggregates the detections against the
+`LabelSpan` entries in `manifest.json`:
 
 ```bash
-cd ~/SafeRoom && ~/SafeRoom/.venv/bin/python tools/replay_session.py \
-    sessions/*/ --ml-model models/fall_detector_xgb.pkl --json figures/replay_results.json
+saferoom-replay sessions/*/ \
+  --ml-model models/fall_detector_xgb.pkl \
+  --json figures/replay_results.json
 ```
 
-Salida por sesión y detector (`rules`, `ml`, `rules+ir`, `ml+ir`):
+Reported per session and per detector (`rules`, `ml`, `rules+ir`, `ml+ir`):
 
-- **recall por evento** — fracción de caídas GT con >= 1 detección
-- **FA/h** — falsas alarmas por hora de sesión
-- **lat_med** — latencia mediana de detección desde el inicio del evento
-- decisiones del IR confirmer por detección (`confirmed`/`vetoed`/`failopen`)
+- **event recall** — fraction of ground-truth falls with at least one detection
+- **FA/h** — false alarms per hour of session
+- **lat_med** — median detection latency from the start of the event
+- the IR confirmer's decision per detection: `confirmed`, `vetoed`, `failopen`
 
-Flags útiles: `--ml-threshold` (umbral del modelo), `--tol-pre/--tol-post`
-(tolerancias de matching detección↔evento en segundos).
+Useful flags: `--ml-threshold` sets the model's decision threshold;
+`--tol-pre` / `--tol-post` set the matching tolerance between a detection and an
+event, in seconds.
 
-Nota: en sesiones donde la habitación no está vacía los primeros 30 s, el
-confirmer no calibra y reporta `failopen` (equivale a radar-only).
+Note: in sessions where the room was not empty for the first 30 s the confirmer
+never calibrates and reports `failopen`, which is equivalent to radar-only.
+
+Use `--ir-calib sessions/<calib_id>` to supply a dedicated empty-room background
+instead, which is what the capture protocol records at the start of each block.
